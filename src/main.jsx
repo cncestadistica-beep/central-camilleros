@@ -1367,6 +1367,11 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
 function AnalyticsPage({ requests: initialRequests, camilleros: initialCamilleros, onUpdateCamilleros, onRefresh, onNavigate }) {
   const [requests, setRequests] = useState(initialRequests || readRequests)
   const [camilleros, setCamilleros] = useState(initialCamilleros || readCamilleros)
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return window.sessionStorage.getItem('indicadores_auth') === 'true'
+  })
+  const [passwordInput, setPasswordInput] = useState('')
+  const [passwordError, setPasswordError] = useState('')
   const [query, setQuery] = useState('')
   const [selectedStatus, setSelectedStatus] = useState('TODOS')
   const [selectedMonth, setSelectedMonth] = useState('TODOS')
@@ -1378,6 +1383,17 @@ function AnalyticsPage({ requests: initialRequests, camilleros: initialCamillero
   const [newCamilleroName, setNewCamilleroName] = useState('')
   const [showCamillerosModal, setShowCamillerosModal] = useState(false)
   const [refreshState, setRefreshState] = useState('idle')
+
+  const handlePasswordSubmit = (e) => {
+    e?.preventDefault()
+    if (passwordInput.trim() === 'CNC2026') {
+      setIsAuthenticated(true)
+      window.sessionStorage.setItem('indicadores_auth', 'true')
+      setPasswordError('')
+    } else {
+      setPasswordError('Contraseña incorrecta. Verifica e intenta de nuevo.')
+    }
+  }
 
   useEffect(() => {
     if (initialRequests) setRequests(initialRequests)
@@ -1761,6 +1777,121 @@ function AnalyticsPage({ requests: initialRequests, camilleros: initialCamillero
 
     const dateStr = new Date().toISOString().slice(0, 10)
     XLSX.writeFile(workbook, `Indicadores_Traslados_CNC_${dateStr}.xlsx`)
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <section className="dashboard-page analytics-page auth-overlay-section" style={{ minHeight: '82vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+        <div className="auth-card" style={{
+          background: 'rgba(255, 255, 255, 0.98)',
+          backdropFilter: 'blur(16px)',
+          borderRadius: '24px',
+          padding: '44px 32px',
+          maxWidth: '440px',
+          width: '100%',
+          boxShadow: '0 25px 60px rgba(48, 44, 107, 0.25), 0 0 0 1px rgba(48, 44, 107, 0.08)',
+          textAlign: 'center',
+          animation: 'fadeIn 0.3s ease-out'
+        }}>
+          <div style={{ marginBottom: '18px' }}>
+            <img src="/logooo-Photoroom.png" alt="Clínica Nueva de Cali" style={{ maxHeight: '65px', objectFit: 'contain' }} />
+          </div>
+          
+          <div style={{
+            width: '56px',
+            height: '56px',
+            margin: '0 auto 16px',
+            borderRadius: '50%',
+            background: 'linear-gradient(135deg, #302c6b, #00aaa9)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#ffffff',
+            fontSize: '26px',
+            boxShadow: '0 8px 20px rgba(0, 170, 169, 0.3)'
+          }}>
+            🔒
+          </div>
+
+          <h2 style={{ fontSize: '1.45rem', fontWeight: 800, color: '#302c6b', margin: '0 0 8px' }}>
+            Acceso a Indicadores
+          </h2>
+          <p style={{ fontSize: '0.95rem', color: '#64748b', margin: '0 0 24px', lineHeight: 1.5 }}>
+            Ingresa la contraseña para ver el contenido
+          </p>
+
+          <form onSubmit={handlePasswordSubmit}>
+            <div style={{ marginBottom: '18px', textAlign: 'left' }}>
+              <input
+                type="password"
+                value={passwordInput}
+                onChange={(e) => {
+                  setPasswordInput(e.target.value)
+                  if (passwordError) setPasswordError('')
+                }}
+                placeholder="Ingresa la contraseña..."
+                autoFocus
+                style={{
+                  width: '100%',
+                  padding: '14px 18px',
+                  fontSize: '1.05rem',
+                  borderRadius: '12px',
+                  border: passwordError ? '2px solid #ef4444' : '2px solid #cbd5e1',
+                  outline: 'none',
+                  transition: 'all 0.2s ease',
+                  background: '#f8fafc',
+                  color: '#1e293b',
+                  boxSizing: 'border-box'
+                }}
+              />
+              {passwordError && (
+                <div style={{ color: '#ef4444', fontSize: '0.86rem', fontWeight: 600, marginTop: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>⚠️</span> {passwordError}
+                </div>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              className="submit-button"
+              style={{
+                width: '100%',
+                padding: '14px',
+                fontSize: '1rem',
+                fontWeight: 700,
+                borderRadius: '12px',
+                cursor: 'pointer',
+                background: 'linear-gradient(135deg, #302c6b, #00aaa9)',
+                color: '#ffffff',
+                border: 'none',
+                boxShadow: '0 8px 20px rgba(48, 44, 107, 0.25)',
+                transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+              }}
+            >
+              Ingresar al Tablero
+            </button>
+          </form>
+
+          <div style={{ marginTop: '22px' }}>
+            <button
+              type="button"
+              onClick={() => onNavigate && onNavigate('dashboard')}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#64748b',
+                fontSize: '0.88rem',
+                cursor: 'pointer',
+                textDecoration: 'underline',
+                padding: '4px'
+              }}
+            >
+              ← Volver a Central de Camilleros
+            </button>
+          </div>
+        </div>
+      </section>
+    )
   }
 
   return (
