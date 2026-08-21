@@ -1793,24 +1793,8 @@ function AnalyticsPage({ requests: initialRequests, camilleros: initialCamillero
           textAlign: 'center',
           animation: 'fadeIn 0.3s ease-out'
         }}>
-          <div style={{ marginBottom: '18px' }}>
-            <img src="/logooo-Photoroom.png" alt="Clínica Nueva de Cali" style={{ maxHeight: '65px', objectFit: 'contain' }} />
-          </div>
-          
-          <div style={{
-            width: '56px',
-            height: '56px',
-            margin: '0 auto 16px',
-            borderRadius: '50%',
-            background: 'linear-gradient(135deg, #302c6b, #00aaa9)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#ffffff',
-            fontSize: '26px',
-            boxShadow: '0 8px 20px rgba(0, 170, 169, 0.3)'
-          }}>
-            🔒
+          <div style={{ marginBottom: '24px' }}>
+            <img src="/logooo-Photoroom.png" alt="Clínica Nueva de Cali" style={{ maxHeight: '72px', objectFit: 'contain' }} />
           </div>
 
           <h2 style={{ fontSize: '1.45rem', fontWeight: 800, color: '#302c6b', margin: '0 0 8px' }}>
