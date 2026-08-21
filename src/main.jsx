@@ -635,6 +635,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
   const [refreshState, setRefreshState] = useState('idle')
   const [detailRequest, setDetailRequest] = useState(null)
   const [editRequest, setEditRequest] = useState(null)
+  const [editError, setEditError] = useState('')
   const [editDraft, setEditDraft] = useState({ status: 'PENDIENTE', mover: '', centralObservation: '' })
 
   useEffect(() => {
@@ -645,25 +646,23 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
     return () => clearInterval(autoRefreshTimer)
   }, [onRefresh])
 
-  // Solo traslados PENDIENTES y NO REALIZADOS en la Central de Camilleros
+  // Solo traslados PENDIENTES en la Central de Camilleros (Realizados y No Realizados van al Historial)
   const activeRequests = useMemo(() => {
-    return requests.filter((r) => String(r.status || '').toUpperCase() !== 'REALIZADO')
+    return requests.filter((r) => String(r.status || '').toUpperCase() === 'PENDIENTE')
   }, [requests])
 
-  const pendingCount = activeRequests.filter((r) => String(r.status || '').toUpperCase() === 'PENDIENTE').length
-  const notRealizedCount = activeRequests.filter((r) => String(r.status || '').toUpperCase() === 'NO REALIZADO').length
+  const pendingCount = activeRequests.length
 
   const visibleRequests = useMemo(() => {
     return activeRequests.filter((request) => {
-      const matchesStatus = filter === 'TODAS' || String(request.status || '').toUpperCase() === filter
       const matchesService = service === 'TODOS' || request.service === service
       const matchesQuery =
         !query ||
         [request.patient, request.record, request.location, request.destination, request.observation, request.mover, request.centralObservation]
           .some((val) => val && val.toLowerCase().includes(query.toLowerCase()))
-      return matchesStatus && matchesService && matchesQuery
+      return matchesService && matchesQuery
     })
-  }, [activeRequests, filter, service, query])
+  }, [activeRequests, service, query])
 
   const triggerRefresh = () => {
     setRefreshState('refreshing')
@@ -675,6 +674,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
   }
 
   const handleOpenEdit = (request) => {
+    setEditError('')
     setEditRequest(request)
     setEditDraft({
       status: request.status || 'PENDIENTE',
@@ -685,6 +685,15 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
 
   const handleSaveEdit = () => {
     if (!editRequest) return
+
+    if (String(editDraft.status || '').toUpperCase() === 'NO REALIZADO') {
+      if (!editDraft.centralObservation || !editDraft.centralObservation.trim()) {
+        setEditError('Es obligatorio ingresar la observación o motivo por el cual no se realizó el traslado.')
+        return
+      }
+    }
+    setEditError('')
+
     let updatedMovementTime = editRequest.movementTime || 'Pendiente'
     let updatedAssignmentTime = editRequest.assignmentTime || null
 
@@ -702,13 +711,19 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
       }
     }
 
+    if (editDraft.status === 'NO REALIZADO') {
+      if (!updatedMovementTime || updatedMovementTime === 'Pendiente' || updatedMovementTime === 'pendiente') {
+        updatedMovementTime = new Date().toLocaleString('es-CO')
+      }
+    }
+
     const updated = requests.map((item) => {
       if (item.id === editRequest.id) {
         return {
           ...item,
           status: editDraft.status,
           mover: editDraft.mover || 'sin asignar',
-          centralObservation: editDraft.centralObservation,
+          centralObservation: editDraft.centralObservation.trim(),
           movementTime: updatedMovementTime,
           assignmentTime: updatedAssignmentTime,
         }
@@ -912,11 +927,14 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
                 <select
                   className="edit-modal-select"
                   value={editDraft.status}
-                  onChange={(e) => setEditDraft({ ...editDraft, status: e.target.value })}
+                  onChange={(e) => {
+                    setEditDraft({ ...editDraft, status: e.target.value })
+                    if (e.target.value !== 'NO REALIZADO') setEditError('')
+                  }}
                 >
-                  <option value="PENDIENTE">PENDIENTE</option>
+                  <option value="PENDIENTE">PENDIENTE (Permanece en Central)</option>
                   <option value="REALIZADO">REALIZADO (Pasa al historial)</option>
-                  <option value="NO REALIZADO">NO REALIZADO</option>
+                  <option value="NO REALIZADO">NO REALIZADO (Pasa al historial)</option>
                 </select>
               </div>
 
@@ -948,14 +966,24 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
               </div>
 
               <div className="edit-form-field">
-                <label className="edit-field-label">Observación camilleros</label>
+                <label className="edit-field-label">
+                  Observación camilleros {editDraft.status === 'NO REALIZADO' && <span style={{ color: '#ef4444', fontWeight: 'bold' }}>* (Obligatorio)</span>}
+                </label>
                 <textarea
-                  className="edit-modal-textarea"
+                  className={`edit-modal-textarea ${editError ? 'has-error-border' : ''}`}
                   rows={3}
                   value={editDraft.centralObservation}
-                  onChange={(e) => setEditDraft({ ...editDraft, centralObservation: e.target.value })}
-                  placeholder="Observaciones de la central o del camillero..."
+                  onChange={(e) => {
+                    setEditDraft({ ...editDraft, centralObservation: e.target.value })
+                    if (e.target.value.trim()) setEditError('')
+                  }}
+                  placeholder={editDraft.status === 'NO REALIZADO' ? 'Especifique obligatoriamente el motivo por el cual no se realizó el traslado...' : 'Observaciones de la central o del camillero...'}
                 />
+                {editError && (
+                  <div className="field-error" style={{ marginTop: '8px', color: '#ef4444', fontWeight: 600, fontSize: '0.88rem' }}>
+                    <span className="error-icon">!</span> {editError}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1039,11 +1067,20 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
     return Array.from(set).sort()
   }, [requests])
 
+  const historyRequests = useMemo(() => {
+    return requests.filter((r) => {
+      const st = String(r.status || '').toUpperCase()
+      return st === 'REALIZADO' || st === 'NO REALIZADO'
+    })
+  }, [requests])
+
   const filteredRequests = useMemo(() => {
-    return requests.filter((req) => {
+    return historyRequests.filter((req) => {
       const date = parseCODate(req.timestamp)
       
-      if (selectedStatus !== 'TODOS' && req.status !== selectedStatus) return false
+      if (selectedStatus !== 'TODOS') {
+        if (String(req.status || '').toUpperCase() !== selectedStatus.toUpperCase()) return false
+      }
 
       if (date) {
         if (selectedMonth !== 'TODOS') {
@@ -1055,10 +1092,10 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
         }
       }
 
-      if (selectedService !== 'TODOS' && req.service !== selectedService) return false
+      if (selectedService !== 'TODOS' && (req.service || '').toLowerCase() !== selectedService.toLowerCase()) return false
       if (selectedMover !== 'TODOS' && (req.mover || '').toLowerCase() !== selectedMover.toLowerCase()) return false
-      if (selectedTransport !== 'TODOS' && (req.transport || '').toLowerCase() !== selectedTransport) return false
-      if (selectedOxygen !== 'TODOS' && (req.oxygen || '').toLowerCase() !== selectedOxygen) return false
+      if (selectedTransport !== 'TODOS' && (req.transport || '').toLowerCase() !== selectedTransport.toLowerCase()) return false
+      if (selectedOxygen !== 'TODOS' && (req.oxygen || '').toLowerCase() !== selectedOxygen.toLowerCase()) return false
 
       if (query.trim()) {
         const q = query.toLowerCase().trim()
@@ -1068,16 +1105,16 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
 
       return true
     })
-  }, [requests, query, selectedStatus, selectedMonth, selectedYear, selectedService, selectedMover, selectedTransport, selectedOxygen])
+  }, [historyRequests, query, selectedStatus, selectedMonth, selectedYear, selectedService, selectedMover, selectedTransport, selectedOxygen])
 
   const totalCount = filteredRequests.length
-  const completedCount = filteredRequests.filter((r) => r.status === 'REALIZADO').length
-  const pendingCount = filteredRequests.filter((r) => r.status === 'PENDIENTE').length
+  const completedCount = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'REALIZADO').length
+  const notRealizedCount = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'NO REALIZADO').length
 
   const avgDuration = useMemo(() => {
     let sum = 0, count = 0
     for (const req of filteredRequests) {
-      if (req.status === 'REALIZADO') {
+      if (String(req.status || '').toUpperCase() === 'REALIZADO') {
         const dur = calculateDurationMinutes(req.timestamp, req.movementTime)
         if (dur !== null) {
           sum += dur
@@ -1093,8 +1130,8 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
     if (onRefresh) onRefresh()
     setTimeout(() => {
       setRefreshState('success')
-      setTimeout(() => setRefreshState('idle'), 1200)
-    }, 400)
+      setTimeout(() => setRefreshState('idle'), 1000)
+    }, 300)
   }
 
   return (
@@ -1104,7 +1141,7 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
           <p className="eyebrow">REGISTRO HISTÓRICO Y AUDITORÍA</p>
           <h1 id="history-title">Historial de traslados</h1>
           <p className="dashboard-subtitle">
-            Consulta detallada de todos los traslados con información completa, filtros y auditoría.
+            Consulta detallada de todos los traslados realizados y no realizados con información completa, filtros y auditoría.
           </p>
         </div>
         <div className="banner-right">
@@ -1121,7 +1158,7 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
       <div className="dashboard-stats history-stats">
         <div><span>Total en historial</span><strong>{totalCount}</strong></div>
         <div><span>Realizados</span><strong>{completedCount}</strong></div>
-        <div className="pending-stat"><span>Pendientes</span><strong>{pendingCount}</strong></div>
+        <div className="not-realized-stat"><span>No realizados</span><strong style={{ color: '#d97706' }}>{notRealizedCount}</strong></div>
         <div className="highlight-kpi-small"><span>Tiempo promedio</span><strong>{formatDuration(avgDuration)}</strong></div>
       </div>
 
@@ -1138,9 +1175,8 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
         <label className="filter-select">
           <span>Estado</span>
           <select value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)}>
-            <option value="TODOS">Todos los estados</option>
+            <option value="TODOS">Todos (Realizados y No realizados)</option>
             <option value="REALIZADO">Realizados</option>
-            <option value="PENDIENTE">Pendientes</option>
             <option value="NO REALIZADO">No realizados</option>
           </select>
         </label>
