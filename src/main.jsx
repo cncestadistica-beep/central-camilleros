@@ -758,9 +758,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
         </div>
       </header>
       <div className="dashboard-stats">
-        <div><span>Total activas</span><strong>{activeRequests.length}</strong></div>
-        <div className="pending-stat"><span>Pendientes</span><strong>{pendingCount}</strong></div>
-        <div><span>No realizados</span><strong>{notRealizedCount}</strong></div>
+        <div className="pending-stat"><span>Solicitudes Pendientes Activas</span><strong>{pendingCount}</strong></div>
       </div>
       <div className="dashboard-toolbar">
         <label className="search-box">
@@ -770,26 +768,10 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
         <label className="filter-select">
           <span>Servicio</span>
           <select value={service} onChange={(e) => setService(e.target.value)}>
-            <option value="TODOS">Todos</option>
+            <option value="TODOS">Todos los servicios</option>
             {services.map((item) => <option key={item} value={item}>{item}</option>)}
           </select>
         </label>
-        <div className="status-tabs">
-          {[
-            ['TODAS', 'Todas'],
-            ['PENDIENTE', 'Pendientes'],
-            ['NO REALIZADO', 'No realizados'],
-          ].map(([val, label]) => (
-            <button
-              type="button"
-              className={filter === val ? 'active' : ''}
-              key={val}
-              onClick={() => setFilter(val)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
         <button type="button" className="analytics-link-btn history-nav-btn" onClick={() => onNavigate('history')} title="Ver historial de traslados">
           Historial
         </button>
