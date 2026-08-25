@@ -239,7 +239,7 @@ const fetchApiCamilleros = async () => {
     const res = await fetch('/api/camilleros')
     if (!res.ok) return null
     const json = await res.json()
-    if (json && Array.isArray(json.data) && json.data.length > 0) {
+    if (json && Array.isArray(json.data)) {
       window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(json.data))
       return json.data
     }
@@ -1384,13 +1384,11 @@ function AnalyticsPage({ requests: initialRequests, camilleros: initialCamillero
   useEffect(() => {
     const liveTimer = setInterval(() => {
       const freshReqs = readRequests()
-      const freshCams = readCamilleros()
       setRequests(freshReqs)
-      setCamilleros(freshCams)
       if (onRefresh) onRefresh()
     }, 1000)
     return () => clearInterval(liveTimer)
-  }, [])
+  }, [onRefresh])
 
   const handleAddCamillero = (e) => {
     e.preventDefault()
@@ -1398,15 +1396,25 @@ function AnalyticsPage({ requests: initialRequests, camilleros: initialCamillero
     if (cleanName && !camilleros.includes(cleanName)) {
       const next = [...camilleros, cleanName]
       setCamilleros(next)
-      onUpdateCamilleros(next)
       setNewCamilleroName('')
+      if (onUpdateCamilleros) {
+        onUpdateCamilleros(next, cleanName, null)
+      } else {
+        window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(next))
+        saveApiCamillero(cleanName, 'POST')
+      }
     }
   }
 
   const handleRemoveCamillero = (nameToRemove) => {
     const next = camilleros.filter((c) => c !== nameToRemove)
     setCamilleros(next)
-    onUpdateCamilleros(next)
+    if (onUpdateCamilleros) {
+      onUpdateCamilleros(next, null, nameToRemove)
+    } else {
+      window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(next))
+      saveApiCamillero(nameToRemove, 'DELETE')
+    }
   }
 
   const triggerRefresh = () => {
