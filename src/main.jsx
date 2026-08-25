@@ -233,14 +233,41 @@ const saveApiRequest = async (request) => {
   }
 }
 
-const fetchApiCamilleros = async () => {
+const fetchApiSync = async () => {
   try {
-    const res = await fetch('/api/camilleros')
+    const res = await fetch('/api/sync')
     if (!res.ok) return null
     const json = await res.json()
-    if (json && Array.isArray(json.data)) {
-      window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(json.data))
-      return json.data
+    if (json && json.success) {
+      let mappedRequests = null
+      if (Array.isArray(json.requests)) {
+        mappedRequests = json.requests.map((item, idx) => ({
+          id: item.id || `req-${idx}`,
+          requestId: item.request_id || item.requestId || `TR-${1001 + idx}`,
+          patient: formatPatientName(item.patient || ''),
+          record: item.record ? String(item.record) : '',
+          location: item.location || '',
+          destination: item.destination || '',
+          service: item.service || '',
+          transport: item.transport || '',
+          oxygen: item.oxygen || '',
+          observation: item.observation || '',
+          mover: item.mover || 'sin asignar',
+          centralObservation: item.central_observation || item.centralObservation || '',
+          status: String(item.status || 'PENDIENTE').toUpperCase(),
+          timestamp: item.timestamp || '',
+          assignmentTime: item.assignment_time || item.assignmentTime || null,
+          movementTime: item.movement_time || item.movementTime || 'pendiente',
+        }))
+        persistRequests(mappedRequests)
+      }
+      if (Array.isArray(json.camilleros)) {
+        window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(json.camilleros))
+      }
+      return {
+        requests: mappedRequests,
+        camilleros: json.camilleros,
+      }
     }
   } catch (err) {
     // fallback
@@ -278,48 +305,45 @@ function App() {
     let mounted = true
 
     const doSync = async () => {
-      const apiReqs = await fetchApiRequests()
-      if (mounted && apiReqs) setRequests(apiReqs)
-      if (Date.now() - lastCamillerosMutationRef.current > 4000) {
-        const apiCams = await fetchApiCamilleros()
-        if (mounted && apiCams) setCamilleros(apiCams)
+      const data = await fetchApiSync()
+      if (mounted && data) {
+        if (data.requests) setRequests(data.requests)
+        if (data.camilleros && Date.now() - lastCamillerosMutationRef.current > 4000) {
+          setCamilleros(data.camilleros)
+        }
       }
     }
 
     doSync()
 
-    const interval = setInterval(async () => {
-      const apiReqs = await fetchApiRequests()
-      if (mounted && apiReqs) {
-        setRequests(apiReqs)
-      } else if (mounted) {
-        setRequests(readRequests())
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        doSync()
       }
-      if (Date.now() - lastCamillerosMutationRef.current > 4000) {
-        const apiCams = await fetchApiCamilleros()
-        if (mounted && apiCams) {
-          setCamilleros(apiCams)
-        } else if (mounted) {
-          setCamilleros(readCamilleros())
-        }
-      }
-    }, 1500)
+    }, 3500)
 
     const onPopState = () => {
       setRequests(readRequests())
       setCamilleros(readCamilleros())
       setPage(getPageFromPath())
     }
+    const onVisibilityChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        doSync()
+      }
+    }
     const onFocus = () => {
       doSync()
     }
     window.addEventListener('popstate', onPopState)
     window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       mounted = false
       clearInterval(interval)
       window.removeEventListener('popstate', onPopState)
       window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [])
 
