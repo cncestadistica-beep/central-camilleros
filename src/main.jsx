@@ -251,9 +251,9 @@ const fetchApiCamilleros = async () => {
 const saveApiCamillero = async (name, action = 'POST') => {
   try {
     await fetch('/api/camilleros', {
-      method: action,
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, action }),
     })
   } catch (err) {
     console.error('Error actualizando camillero en API:', err)
@@ -2315,7 +2315,11 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
                     <button
                       type="button"
                       className="personnel-tag-close"
-                      onClick={() => handleRemoveCamillero(name)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                        handleRemoveCamillero(name)
+                      }}
                       title={`Eliminar a ${name}`}
                     >
                       ✕

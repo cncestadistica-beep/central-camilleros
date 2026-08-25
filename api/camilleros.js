@@ -15,21 +15,21 @@ export default async function handler(req, res) {
       return res.status(200).json({ source: 'turso', data: rows.map(r => r.name) })
     }
 
-    if (req.method === 'POST') {
+    if (req.method === 'DELETE' || body.action === 'delete' || body.action === 'DELETE') {
       const name = (body.name || req.query.name || '').toLowerCase().trim()
       if (!name) return res.status(400).json({ error: 'Nombre requerido' })
       await executeTurso([{
-        sql: 'INSERT OR REPLACE INTO camilleros_personal (name, active) VALUES (?, 1);',
+        sql: 'DELETE FROM camilleros_personal WHERE LOWER(TRIM(name)) = ?;',
         args: [name]
       }])
       return res.status(200).json({ success: true, name })
     }
 
-    if (req.method === 'DELETE') {
+    if (req.method === 'POST') {
       const name = (body.name || req.query.name || '').toLowerCase().trim()
       if (!name) return res.status(400).json({ error: 'Nombre requerido' })
       await executeTurso([{
-        sql: 'DELETE FROM camilleros_personal WHERE LOWER(TRIM(name)) = ?;',
+        sql: 'INSERT OR REPLACE INTO camilleros_personal (name, active) VALUES (?, 1);',
         args: [name]
       }])
       return res.status(200).json({ success: true, name })
