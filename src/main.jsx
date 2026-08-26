@@ -772,6 +772,12 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
   const handleSaveEdit = () => {
     if (!editRequest) return
 
+    const moverClean = (editDraft.mover || '').trim()
+    if (!moverClean || moverClean.toLowerCase() === 'sin asignar') {
+      setEditError('Es obligatorio seleccionar un camillero de la lista.')
+      return
+    }
+
     if (String(editDraft.status || '').toUpperCase() === 'NO REALIZADO') {
       if (!editDraft.centralObservation || !editDraft.centralObservation.trim()) {
         setEditError('Es obligatorio ingresar la observación o motivo por el cual no se realizó el traslado.')
@@ -783,7 +789,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
     let updatedMovementTime = editRequest.movementTime || 'Pendiente'
     let updatedAssignmentTime = editRequest.assignmentTime || null
 
-    if (editDraft.mover && editDraft.mover !== 'sin asignar' && !updatedAssignmentTime) {
+    if (moverClean && moverClean.toLowerCase() !== 'sin asignar' && !updatedAssignmentTime) {
       updatedAssignmentTime = new Date().toLocaleString('es-CO')
     }
 
@@ -808,7 +814,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
         return {
           ...item,
           status: editDraft.status,
-          mover: editDraft.mover || 'sin asignar',
+          mover: moverClean,
           centralObservation: editDraft.centralObservation.trim(),
           movementTime: updatedMovementTime,
           assignmentTime: updatedAssignmentTime,
@@ -1007,7 +1013,9 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
               </div>
 
               <div className="edit-form-field">
-                <label className="edit-field-label">Camillero que realiza</label>
+                <label className="edit-field-label">
+                  Camillero que realiza <span style={{ color: '#ef4444', fontWeight: 'bold' }}>* (Obligatorio)</span>
+                </label>
                 {isMoverLocked ? (
                   <div className="locked-field-box">
                     <input
@@ -1021,11 +1029,14 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
                   </div>
                 ) : (
                   <select
-                    className="edit-modal-select"
+                    className={`edit-modal-select ${editError && (!editDraft.mover || editDraft.mover === 'sin asignar') ? 'has-error-border' : ''}`}
                     value={editDraft.mover}
-                    onChange={(e) => setEditDraft({ ...editDraft, mover: e.target.value })}
+                    onChange={(e) => {
+                      setEditDraft({ ...editDraft, mover: e.target.value })
+                      if (e.target.value) setEditError('')
+                    }}
                   >
-                    <option value="">sin asignar</option>
+                    <option value="">-- Selecciona un camillero de la lista * --</option>
                     {(camilleros || []).map((name) => (
                       <option key={name} value={name}>{name}</option>
                     ))}
