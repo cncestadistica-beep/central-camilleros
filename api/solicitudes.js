@@ -1,4 +1,4 @@
-﻿import { executeTurso, parseRows } from './turso.js'
+import { executeTurso, parseRows } from './turso.js'
 
 export default async function handler(req, res) {
   const isNetlify = typeof res?.status !== 'function'
@@ -36,14 +36,15 @@ export default async function handler(req, res) {
         INSERT OR REPLACE INTO solicitudes_camilleros (
           id, request_id, patient, record, service, location, destination,
           transport, oxygen, observation, status, mover, central_observation,
-          timestamp, assignment_time, movement_time
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+          timestamp, assignment_time, movement_time, priority
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
       `
       const args = [
         s.id, s.requestId || s.request_id, s.patient, s.record, s.service,
         s.location, s.destination, s.transport, s.oxygen, s.observation || '',
         s.status || 'PENDIENTE', s.mover || 'sin asignar', s.centralObservation || s.central_observation || '',
-        s.timestamp, s.assignmentTime || s.assignment_time || null, s.movementTime || s.movement_time || 'pendiente'
+        s.timestamp, s.assignmentTime || s.assignment_time || null, s.movementTime || s.movement_time || 'pendiente',
+        (s.priority || 'media').toLowerCase().trim()
       ]
       await executeTurso([{ sql, args }])
       const bodyData = { success: true, id: s.id }

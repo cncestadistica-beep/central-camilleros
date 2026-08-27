@@ -43,6 +43,7 @@ const initialForm = {
   transport: 'wheelchair',
   oxygen: '',
   observation: '',
+  priority: 'media',
 }
 
 const demoRequests = []
@@ -262,6 +263,7 @@ const fetchApiSync = async () => {
       timestamp: item.timestamp || '',
       assignmentTime: item.assignment_time || item.assignmentTime || null,
       movementTime: item.movement_time || item.movementTime || 'pendiente',
+      priority: (item.priority || 'media').trim().toLowerCase(),
     }))
     persistRequests(mappedRequests)
     if (Array.isArray(rawCamilleros)) {
@@ -296,6 +298,7 @@ const fetchApiSync = async () => {
               timestamp: item.timestamp || '',
               assignmentTime: item.assignment_time || item.assignmentTime || null,
               movementTime: item.movement_time || item.movementTime || 'pendiente',
+              priority: (item.priority || 'media').trim().toLowerCase(),
             }))
             persistRequests(mappedRequests)
           }
@@ -319,14 +322,15 @@ const saveApiRequest = async (request) => {
       INSERT OR REPLACE INTO solicitudes_camilleros (
         id, request_id, patient, record, service, location, destination,
         transport, oxygen, observation, status, mover, central_observation,
-        timestamp, assignment_time, movement_time
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        timestamp, assignment_time, movement_time, priority
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     `
     const args = [
       request.id, request.requestId || request.request_id, request.patient, request.record, request.service,
       request.location, request.destination, request.transport, request.oxygen, request.observation || '',
       request.status || 'PENDIENTE', request.mover || 'sin asignar', request.centralObservation || request.central_observation || '',
-      request.timestamp, request.assignmentTime || request.assignment_time || null, request.movementTime || request.movement_time || 'pendiente'
+      request.timestamp, request.assignmentTime || request.assignment_time || null, request.movementTime || request.movement_time || 'pendiente',
+      (request.priority || 'media').trim().toLowerCase()
     ]
     await directTursoExecute([{ sql, args }])
   } catch (err) {
@@ -499,6 +503,7 @@ function App() {
       status: 'PENDIENTE',
       mover: 'sin asignar',
       centralObservation: '',
+      priority: (form.priority || 'media').trim().toLowerCase(),
     }
     const nextRequests = [request, ...currentRequests]
     setRequests(nextRequests)
@@ -563,6 +568,7 @@ function RequestForm({ onSubmit, requests, onNavigate }) {
     if (!form.record.trim()) nextErrors.record = 'Ingresa el número de registro'
     if (!form.service) nextErrors.service = 'Selecciona el servicio que solicita'
     if (!form.location.trim()) nextErrors.location = 'Indica la ubicación específica'
+    if (!form.priority) nextErrors.priority = 'Selecciona la prioridad del traslado'
     if (!form.destination.trim()) nextErrors.destination = 'Indica el destino del traslado'
     if (!form.transport) nextErrors.transport = 'Selecciona el medio de transporte'
     if (!form.oxygen) nextErrors.oxygen = 'Indica si requiere soporte de O2'
@@ -655,6 +661,9 @@ function RequestForm({ onSubmit, requests, onNavigate }) {
               </Field>
               <Field label="Ubicación específica" required error={errors.location}>
                 <input aria-label="Ubicación específica" value={form.location} onChange={(e) => update('location', e.target.value)} placeholder="ej. urgencias cubículo 4" />
+              </Field>
+              <Field label="Prioridad del traslado" required error={errors.priority}>
+                <Dropdown value={form.priority} options={['alta', 'media', 'baja']} placeholder="elegir prioridad" onChange={(value) => update('priority', value)} />
               </Field>
             </div>
           </div>
@@ -900,6 +909,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
                 <th>Nombre de paciente</th>
                 <th>Ubicación específica</th>
                 <th>Destino</th>
+                <th>Prioridad</th>
                 <th>Confirmación de movimiento</th>
                 <th>Acción</th>
               </tr>
@@ -910,6 +920,11 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
                   <td><strong>{request.patient}</strong></td>
                   <td>{request.location}</td>
                   <td>{request.destination}</td>
+                  <td>
+                    <span className={`priority-badge priority-${(request.priority || 'media').toLowerCase()}`}>
+                      {(request.priority || 'media').toUpperCase()}
+                    </span>
+                  </td>
                   <td>
                     <span className={`badge-pill ${request.status === 'PENDIENTE' ? 'pill-purple' : request.status === 'NO REALIZADO' ? 'pill-orange' : 'pill-green'}`}>
                       {request.status}
@@ -927,7 +942,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
               ))}
               {!visibleRequests.length && (
                 <tr>
-                  <td colSpan={5} className="empty-state">No hay traslados activos con estos filtros.</td>
+                  <td colSpan={6} className="empty-state">No hay traslados activos con estos filtros.</td>
                 </tr>
               )}
             </tbody>
@@ -948,6 +963,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
               <div className="detail-item"><span>Marca temporal</span><strong>{detailRequest.timestamp}</strong></div>
               <div className="detail-item"><span>Hora tomada / asignada</span><strong>{detailRequest.assignmentTime || 'Pendiente'}</strong></div>
               <div className="detail-item"><span>Oportunidad de Servicio</span><strong>{detailRequest.status === 'REALIZADO' ? detailRequest.movementTime : 'Pendiente'}</strong></div>
+              <div className="detail-item"><span>Prioridad</span><strong className={`priority-badge priority-${(detailRequest.priority || 'media').toLowerCase()}`}>{(detailRequest.priority || 'media').toUpperCase()}</strong></div>
               <div className="detail-item"><span>Nombre de paciente</span><strong>{detailRequest.patient}</strong></div>
               <div className="detail-item"><span>Registro</span><strong>{detailRequest.record}</strong></div>
               <div className="detail-item"><span>Servicio que solicita</span><strong>{detailRequest.service}</strong></div>
@@ -980,6 +996,12 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
               <div className="summary-item">
                 <span>ID de Solicitud</span>
                 <strong className="id-highlight">{editRequest.requestId || 'TR-1000'}</strong>
+              </div>
+              <div className="summary-item">
+                <span>Prioridad</span>
+                <strong className={`priority-badge priority-${(editRequest.priority || 'media').toLowerCase()}`}>
+                  {(editRequest.priority || 'media').toUpperCase()}
+                </strong>
               </div>
               <div className="summary-item">
                 <span>Paciente</span>
@@ -1088,6 +1110,7 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
   const [selectedYear, setSelectedYear] = useState('TODOS')
   const [selectedService, setSelectedService] = useState('TODOS')
   const [selectedMover, setSelectedMover] = useState('TODOS')
+  const [selectedPriority, setSelectedPriority] = useState('TODOS')
   const [selectedTransport, setSelectedTransport] = useState('TODOS')
   const [selectedOxygen, setSelectedOxygen] = useState('TODOS')
   const [refreshState, setRefreshState] = useState('idle')
@@ -1173,18 +1196,19 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
 
       if (selectedService !== 'TODOS' && (req.service || '').toLowerCase() !== selectedService.toLowerCase()) return false
       if (selectedMover !== 'TODOS' && (req.mover || '').toLowerCase() !== selectedMover.toLowerCase()) return false
+      if (selectedPriority !== 'TODOS' && (req.priority || 'media').toLowerCase() !== selectedPriority.toLowerCase()) return false
       if (selectedTransport !== 'TODOS' && (req.transport || '').toLowerCase() !== selectedTransport.toLowerCase()) return false
       if (selectedOxygen !== 'TODOS' && (req.oxygen || '').toLowerCase() !== selectedOxygen.toLowerCase()) return false
 
       if (query.trim()) {
         const q = query.toLowerCase().trim()
-        const haystack = `${req.requestId || ''} ${req.patient || ''} ${req.record || ''} ${req.location || ''} ${req.destination || ''} ${req.service || ''} ${req.mover || ''} ${req.observation || ''} ${req.centralObservation || ''}`.toLowerCase()
+        const haystack = `${req.requestId || ''} ${req.patient || ''} ${req.record || ''} ${req.location || ''} ${req.destination || ''} ${req.service || ''} ${req.mover || ''} ${req.priority || ''} ${req.observation || ''} ${req.centralObservation || ''}`.toLowerCase()
         if (!haystack.includes(q)) return false
       }
 
       return true
     })
-  }, [historyRequests, query, selectedStatus, selectedMonth, selectedYear, selectedService, selectedMover, selectedTransport, selectedOxygen])
+  }, [historyRequests, query, selectedStatus, selectedMonth, selectedYear, selectedService, selectedMover, selectedPriority, selectedTransport, selectedOxygen])
 
   const totalCount = filteredRequests.length
   const completedCount = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'REALIZADO').length
@@ -1301,6 +1325,16 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
         </label>
 
         <label className="filter-select">
+          <span>Prioridad</span>
+          <select value={selectedPriority} onChange={(e) => setSelectedPriority(e.target.value)}>
+            <option value="TODOS">Todas</option>
+            <option value="alta">alta</option>
+            <option value="media">media</option>
+            <option value="baja">baja</option>
+          </select>
+        </label>
+
+        <label className="filter-select">
           <span>Transporte</span>
           <select value={selectedTransport} onChange={(e) => setSelectedTransport(e.target.value)}>
             <option value="TODOS">Todos</option>
@@ -1354,6 +1388,7 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
                 <th>Oportunidad de Servicio</th>
                 <th>Oportunidad de Traslado</th>
                 <th>Oportunidad Global</th>
+                <th>Prioridad</th>
                 <th>Paciente</th>
                 <th>Registro</th>
                 <th>Servicio Solicitante</th>
@@ -1398,6 +1433,11 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
                         <span className="duration-badge">—</span>
                       )}
                     </td>
+                    <td>
+                      <span className={`priority-badge priority-${(req.priority || 'media').toLowerCase()}`}>
+                        {(req.priority || 'media').toUpperCase()}
+                      </span>
+                    </td>
                     <td><strong>{req.patient}</strong></td>
                     <td>{req.record}</td>
                     <td>{req.service}</td>
@@ -1419,7 +1459,7 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
               })}
               {!filteredRequests.length && (
                 <tr>
-                  <td colSpan={19} className="empty-state">No se encontraron traslados con los filtros seleccionados.</td>
+                  <td colSpan={20} className="empty-state">No se encontraron traslados con los filtros seleccionados.</td>
                 </tr>
               )}
             </tbody>
@@ -1439,6 +1479,7 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
               <div className="detail-item"><span>Marca temporal</span><strong>{detailRequest.timestamp}</strong></div>
               <div className="detail-item"><span>Hora tomada / asignada</span><strong>{detailRequest.assignmentTime || 'Pendiente'}</strong></div>
               <div className="detail-item"><span>Oportunidad de Servicio</span><strong>{detailRequest.status === 'REALIZADO' ? detailRequest.movementTime : 'Pendiente'}</strong></div>
+              <div className="detail-item"><span>Prioridad</span><strong className={`priority-badge priority-${(detailRequest.priority || 'media').toLowerCase()}`}>{(detailRequest.priority || 'media').toUpperCase()}</strong></div>
               <div className="detail-item"><span>Nombre de paciente</span><strong>{detailRequest.patient}</strong></div>
               <div className="detail-item"><span>Registro</span><strong>{detailRequest.record}</strong></div>
               <div className="detail-item"><span>Servicio que solicita</span><strong>{detailRequest.service}</strong></div>
@@ -1474,6 +1515,7 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
   const [selectedYear, setSelectedYear] = useState('TODOS')
   const [selectedService, setSelectedService] = useState('TODOS')
   const [selectedMover, setSelectedMover] = useState('TODOS')
+  const [selectedPriority, setSelectedPriority] = useState('TODOS')
   const [selectedOxygen, setSelectedOxygen] = useState('TODOS')
   const [selectedTransport, setSelectedTransport] = useState('TODOS')
   const [newCamilleroName, setNewCamilleroName] = useState('')
@@ -1601,6 +1643,10 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
         if ((req.mover || '').toLowerCase().trim() !== selectedMover.toLowerCase().trim()) return false
       }
 
+      if (selectedPriority !== 'TODOS') {
+        if ((req.priority || 'media').toLowerCase().trim() !== selectedPriority.toLowerCase().trim()) return false
+      }
+
       if (selectedOxygen !== 'TODOS') {
         if ((req.oxygen || '').toLowerCase().trim() !== selectedOxygen.toLowerCase().trim()) return false
       }
@@ -1617,14 +1663,15 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
         const obsMatch = (req.observation || '').toLowerCase().includes(q)
         const centralObsMatch = (req.centralObservation || '').toLowerCase().includes(q)
         const moverMatch = (req.mover || '').toLowerCase().includes(q)
-        if (!idMatch && !patientMatch && !recordMatch && !destMatch && !obsMatch && !centralObsMatch && !moverMatch) {
+        const priorityMatch = (req.priority || '').toLowerCase().includes(q)
+        if (!idMatch && !patientMatch && !recordMatch && !destMatch && !obsMatch && !centralObsMatch && !moverMatch && !priorityMatch) {
           return false
         }
       }
 
       return true
     })
-  }, [requests, selectedMonth, selectedYear, selectedStatus, selectedService, selectedMover, selectedOxygen, selectedTransport, query])
+  }, [requests, selectedMonth, selectedYear, selectedStatus, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport, query])
 
   const totalCompleted = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'REALIZADO').length
   const totalPending = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'PENDIENTE').length
@@ -1724,6 +1771,49 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
       wheelchair: calcCategory('silla de ruedas'),
       bed: calcCategory('cama'),
       ambulance: calcCategory('camilla ambulancia'),
+    }
+  }, [filteredRequests])
+
+  const priorityStats = useMemo(() => {
+    const calcCategory = (val, colorClass) => {
+      const list = filteredRequests.filter((r) => (r.priority || 'media').toLowerCase() === val)
+      const total = filteredRequests.length
+      const pct = total > 0 ? ((list.length / total) * 100).toFixed(1) : '0.0'
+
+      let sumService = 0, countService = 0
+      let sumReact = 0, countReact = 0
+      let sumGlobal = 0, countGlobal = 0
+
+      for (const req of list) {
+        const reactDur = calculateDurationMinutes(req.timestamp, req.assignmentTime || (req.status === 'REALIZADO' ? req.movementTime : null))
+        if (reactDur !== null) {
+          sumReact += reactDur
+          countReact += 1
+        }
+        if (req.status === 'REALIZADO') {
+          const sDur = calculateDurationMinutes(req.assignmentTime || req.timestamp, req.movementTime)
+          if (sDur !== null) {
+            sumService += sDur
+            countService += 1
+          }
+          const gDur = calculateDurationMinutes(req.timestamp, req.movementTime)
+          if (gDur !== null) {
+            sumGlobal += gDur
+            countGlobal += 1
+          }
+        }
+      }
+
+      const avgService = countService > 0 ? Math.round(sumService / countService) : 0
+      const avgReact = countReact > 0 ? Math.round(sumReact / countReact) : 0
+      const avgGlobal = countGlobal > 0 ? Math.round(sumGlobal / countGlobal) : 0
+
+      return { count: list.length, pct, avgService, avgReact, avgGlobal, colorClass }
+    }
+    return {
+      alta: calcCategory('alta', 'fill-red'),
+      media: calcCategory('media', 'fill-orange'),
+      baja: calcCategory('baja', 'fill-green'),
     }
   }, [filteredRequests])
 
@@ -1836,6 +1926,7 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
         'ID Único': req.requestId || 'TR-1000',
         'Registro': req.record || '',
         'Paciente': req.patient || '',
+        'Prioridad': (req.priority || 'media').toUpperCase(),
         'Servicio Solicitante': req.service || '',
         'Ubicación Específica': req.location || '',
         'Destino': req.destination || '',
@@ -2064,6 +2155,16 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
           </label>
 
           <label className="compact-filter-item">
+            <span>Prioridad</span>
+            <select value={selectedPriority} onChange={(e) => setSelectedPriority(e.target.value)}>
+              <option value="TODOS">Todos</option>
+              <option value="alta">Alta</option>
+              <option value="media">Media</option>
+              <option value="baja">Baja</option>
+            </select>
+          </label>
+
+          <label className="compact-filter-item">
             <span>Transporte</span>
             <select value={selectedTransport} onChange={(e) => setSelectedTransport(e.target.value)}>
               <option value="TODOS">Todos</option>
@@ -2156,7 +2257,7 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
         </div>
       </div>
 
-      {/* CUADRÍCULA 2x2 DE GRÁFICOS (OPORTUNIDAD POR SERVICIO ARRIBA A LA IZQUIERDA DE PRIMERO) */}
+      {/* FILA 1 DE GRÁFICOS: SERVICIOS Y CAMILLEROS */}
       <div className="charts-four-grid">
         {/* GRÁFICO 1 (TOP-LEFT): OPORTUNIDAD GLOBAL POR SERVICIO */}
         <div className="stat-card-container productivity-card-container">
@@ -2221,8 +2322,60 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
             )}
           </div>
         </div>
+      </div>
 
-        {/* GRÁFICO 3 (BOTTOM-LEFT): SOPORTE DE O2 */}
+      {/* FILA 2 DE GRÁFICOS (3 COLUMNAS): PRIORIDAD, SOPORTE O2 Y TRANSPORTE */}
+      <div className="charts-three-columns-grid">
+        {/* GRÁFICO 3: PRIORIDAD DEL TRASLADO */}
+        <div className="stat-card-container">
+          <h4 className="stat-card-heading">Prioridad del Traslado</h4>
+          <div
+            className="stat-bar-item productivity-item"
+            title={`Prioridad ALTA\n• Promedio realización: ${priorityStats.alta.avgService} min\n• Promedio toma en central: ${priorityStats.alta.avgReact} min\n• Promedio Global: ${priorityStats.alta.avgGlobal} min\n• Traslados: ${priorityStats.alta.count} (${priorityStats.alta.pct}%)`}
+          >
+            <div className="stat-bar-label-row">
+              <span className="stat-item-name" style={{ color: '#dc2626' }}>● ALTA</span>
+              <span className="stat-item-count">
+                {priorityStats.alta.count} traslados ({priorityStats.alta.pct}%) {priorityStats.alta.avgGlobal > 0 ? `· ${priorityStats.alta.avgGlobal} min` : ''}
+              </span>
+            </div>
+            <div className="stat-bar-track">
+              <div className="stat-bar-fill-gradient fill-red" style={{ width: `${priorityStats.alta.pct}%` }} />
+            </div>
+          </div>
+
+          <div
+            className="stat-bar-item productivity-item"
+            title={`Prioridad MEDIA\n• Promedio realización: ${priorityStats.media.avgService} min\n• Promedio toma en central: ${priorityStats.media.avgReact} min\n• Promedio Global: ${priorityStats.media.avgGlobal} min\n• Traslados: ${priorityStats.media.count} (${priorityStats.media.pct}%)`}
+          >
+            <div className="stat-bar-label-row">
+              <span className="stat-item-name" style={{ color: '#d97706' }}>● MEDIA</span>
+              <span className="stat-item-count">
+                {priorityStats.media.count} traslados ({priorityStats.media.pct}%) {priorityStats.media.avgGlobal > 0 ? `· ${priorityStats.media.avgGlobal} min` : ''}
+              </span>
+            </div>
+            <div className="stat-bar-track">
+              <div className="stat-bar-fill-gradient fill-orange" style={{ width: `${priorityStats.media.pct}%` }} />
+            </div>
+          </div>
+
+          <div
+            className="stat-bar-item productivity-item"
+            title={`Prioridad BAJA\n• Promedio realización: ${priorityStats.baja.avgService} min\n• Promedio toma en central: ${priorityStats.baja.avgReact} min\n• Promedio Global: ${priorityStats.baja.avgGlobal} min\n• Traslados: ${priorityStats.baja.count} (${priorityStats.baja.pct}%)`}
+          >
+            <div className="stat-bar-label-row">
+              <span className="stat-item-name" style={{ color: '#059669' }}>● BAJA</span>
+              <span className="stat-item-count">
+                {priorityStats.baja.count} traslados ({priorityStats.baja.pct}%) {priorityStats.baja.avgGlobal > 0 ? `· ${priorityStats.baja.avgGlobal} min` : ''}
+              </span>
+            </div>
+            <div className="stat-bar-track">
+              <div className="stat-bar-fill-gradient fill-green" style={{ width: `${priorityStats.baja.pct}%` }} />
+            </div>
+          </div>
+        </div>
+
+        {/* GRÁFICO 4: SOPORTE DE O2 */}
         <div className="stat-card-container">
           <h4 className="stat-card-heading">Soporte de O2</h4>
           <div
@@ -2252,7 +2405,7 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
           </div>
         </div>
 
-        {/* GRÁFICO 4 (BOTTOM-RIGHT): MEDIO DE TRANSPORTE */}
+        {/* GRÁFICO 5: MEDIO DE TRANSPORTE */}
         <div className="stat-card-container">
           <h4 className="stat-card-heading">Medio de Transporte</h4>
           <div
@@ -2326,6 +2479,7 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
                 <th>ID Único</th>
                 <th>Registro</th>
                 <th>Paciente</th>
+                <th>Prioridad</th>
                 <th>Servicio</th>
                 <th>Ubicacion especifica</th>
                 <th>Destino</th>
@@ -2354,6 +2508,11 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
                     <td><strong className="table-id-text">{req.requestId || 'TR-1000'}</strong></td>
                     <td><strong>{req.record}</strong></td>
                     <td className="patient-name-cell">{req.patient}</td>
+                    <td>
+                      <span className={`priority-badge priority-${(req.priority || 'media').toLowerCase()}`}>
+                        {(req.priority || 'media').toUpperCase()}
+                      </span>
+                    </td>
                     <td className="service-name-cell">{req.service}</td>
                     <td>{req.location}</td>
                     <td>{req.destination}</td>

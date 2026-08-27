@@ -1337,6 +1337,48 @@ td.status-cell.pendiente { color: #53389e !important; font-weight: 800 !importan
   background: linear-gradient(90deg, #6366f1, #8b5cf6) !important;
 }
 
+.stat-bar-fill-gradient.fill-red {
+  background: linear-gradient(90deg, #dc2626, #ef4444) !important;
+}
+
+.stat-bar-fill-gradient.fill-orange {
+  background: linear-gradient(90deg, #d97706, #f59e0b) !important;
+}
+
+.stat-bar-fill-gradient.fill-green {
+  background: linear-gradient(90deg, #059669, #10b981) !important;
+}
+
+.priority-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 4px 10px !important;
+  border-radius: 9999px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+}
+
+.priority-badge.priority-alta {
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: #dc2626 !important;
+  border: 1px solid rgba(239, 68, 68, 0.3) !important;
+}
+
+.priority-badge.priority-media {
+  background: rgba(245, 158, 11, 0.12) !important;
+  color: #d97706 !important;
+  border: 1px solid rgba(245, 158, 11, 0.3) !important;
+}
+
+.priority-badge.priority-baja {
+  background: rgba(16, 185, 129, 0.12) !important;
+  color: #059669 !important;
+  border: 1px solid rgba(16, 185, 129, 0.3) !important;
+}
+
 .empty-state-mini {
   padding: 20px 0;
   text-align: center;
