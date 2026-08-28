@@ -1103,6 +1103,74 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
   )
 }
 
+function TablePagination({ currentPage, totalItems, pageSize = 10, onPageChange }) {
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
+  if (totalItems === 0) return null
+
+  const startItem = (currentPage - 1) * pageSize + 1
+  const endItem = Math.min(currentPage * pageSize, totalItems)
+
+  const getPageNumbers = () => {
+    const pages = []
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i)
+    } else {
+      pages.push(1)
+      if (currentPage > 3) pages.push('...')
+      const start = Math.max(2, currentPage - 1)
+      const end = Math.min(totalPages - 1, currentPage + 1)
+      for (let i = start; i <= end; i++) pages.push(i)
+      if (currentPage < totalPages - 2) pages.push('...')
+      pages.push(totalPages)
+    }
+    return pages
+  }
+
+  return (
+    <div className="table-pagination-footer">
+      <div className="pagination-info">
+        Mostrando <strong>{startItem} - {endItem}</strong> de <strong>{totalItems}</strong> registros (Página <strong>{currentPage}</strong> de <strong>{totalPages}</strong>)
+      </div>
+      <div className="pagination-controls">
+        <button
+          type="button"
+          className="pagination-btn"
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={currentPage <= 1}
+          title="Página anterior"
+        >
+          ← Anterior
+        </button>
+        <div className="pagination-pages-list">
+          {getPageNumbers().map((p, idx) => (
+            p === '...' ? (
+              <span key={`ellipsis-${idx}`} className="pagination-ellipsis">...</span>
+            ) : (
+              <button
+                key={p}
+                type="button"
+                className={`pagination-page-number ${currentPage === p ? 'active' : ''}`}
+                onClick={() => onPageChange(p)}
+              >
+                {p}
+              </button>
+            )
+          ))}
+        </div>
+        <button
+          type="button"
+          className="pagination-btn"
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={currentPage >= totalPages}
+          title="Página siguiente"
+        >
+          Siguiente →
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function HistoryPage({ requests, onRefresh, onNavigate }) {
   const [query, setQuery] = useState('')
   const [selectedStatus, setSelectedStatus] = useState('TODOS')
@@ -1113,6 +1181,7 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
   const [selectedPriority, setSelectedPriority] = useState('TODOS')
   const [selectedTransport, setSelectedTransport] = useState('TODOS')
   const [selectedOxygen, setSelectedOxygen] = useState('TODOS')
+  const [currentPage, setCurrentPage] = useState(1)
   const [refreshState, setRefreshState] = useState('idle')
   const [detailRequest, setDetailRequest] = useState(null)
 
@@ -1123,6 +1192,10 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
     }, 60000)
     return () => clearInterval(autoRefreshTimer)
   }, [onRefresh])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [query, selectedStatus, selectedMonth, selectedYear, selectedService, selectedMover, selectedPriority, selectedTransport, selectedOxygen])
 
   const monthNamesList = [
     'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -1213,6 +1286,11 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
   const totalCount = filteredRequests.length
   const completedCount = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'REALIZADO').length
   const notRealizedCount = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'NO REALIZADO').length
+
+  const paginatedRequests = useMemo(() => {
+    const start = (currentPage - 1) * 10
+    return filteredRequests.slice(start, start + 10)
+  }, [filteredRequests, currentPage])
 
   const avgDuration = useMemo(() => {
     let sum = 0, count = 0
@@ -1404,7 +1482,7 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
               </tr>
             </thead>
             <tbody>
-              {filteredRequests.map((req) => {
+              {paginatedRequests.map((req) => {
                 const isCompleted = req.status === 'REALIZADO'
                 const serviceDur = isCompleted ? calculateDurationMinutes(req.assignmentTime || req.timestamp, req.movementTime) : null
                 const reactDur = calculateDurationMinutes(req.timestamp, req.assignmentTime || (isCompleted ? req.movementTime : null))
@@ -1465,6 +1543,12 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
             </tbody>
           </table>
         </div>
+        <TablePagination
+          currentPage={currentPage}
+          totalItems={filteredRequests.length}
+          pageSize={10}
+          onPageChange={setCurrentPage}
+        />
       </div>
 
       {detailRequest && (
@@ -1518,6 +1602,7 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
   const [selectedPriority, setSelectedPriority] = useState('TODOS')
   const [selectedOxygen, setSelectedOxygen] = useState('TODOS')
   const [selectedTransport, setSelectedTransport] = useState('TODOS')
+  const [currentPage, setCurrentPage] = useState(1)
   const [newCamilleroName, setNewCamilleroName] = useState('')
   const [showCamillerosModal, setShowCamillerosModal] = useState(false)
   const [refreshState, setRefreshState] = useState('idle')
@@ -1536,6 +1621,10 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
   useEffect(() => {
     if (initialRequests) setRequests(initialRequests)
   }, [initialRequests])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [query, selectedStatus, selectedMonth, selectedYear, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport])
 
   useEffect(() => {
     const liveTimer = setInterval(() => {
@@ -1672,6 +1761,11 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
       return true
     })
   }, [requests, selectedMonth, selectedYear, selectedStatus, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport, query])
+
+  const paginatedRequests = useMemo(() => {
+    const start = (currentPage - 1) * 10
+    return filteredRequests.slice(start, start + 10)
+  }, [filteredRequests, currentPage])
 
   const totalCompleted = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'REALIZADO').length
   const totalPending = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'PENDIENTE').length
@@ -2498,7 +2592,7 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
               </tr>
             </thead>
             <tbody>
-              {filteredRequests.map((req) => {
+              {paginatedRequests.map((req) => {
                 const isCompleted = req.status === 'REALIZADO'
                 const serviceDur = isCompleted ? calculateDurationMinutes(req.assignmentTime || req.timestamp, req.movementTime) : null
                 const reactDur = calculateDurationMinutes(req.timestamp, req.assignmentTime || (isCompleted ? req.movementTime : null))
@@ -2549,12 +2643,18 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
               })}
               {!filteredRequests.length && (
                 <tr>
-                  <td colSpan={18} className="empty-state">No hay traslados con estos filtros.</td>
+                  <td colSpan={19} className="empty-state">No hay traslados con estos filtros.</td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+        <TablePagination
+          currentPage={currentPage}
+          totalItems={filteredRequests.length}
+          pageSize={10}
+          onPageChange={setCurrentPage}
+        />
       </div>
 
       {/* MODAL DE GESTIÓN DEL PERSONAL DE CAMILLEROS */}
