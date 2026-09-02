@@ -869,11 +869,13 @@ td.status-cell.pendiente { color: #53389e !important; font-weight: 800 !importan
 }
 
 .analytics-unified-toolbar {
+  position: relative !important;
+  z-index: 500 !important;
   display: flex !important;
   flex-direction: column !important;
   gap: 10px !important;
   padding: 12px 18px !important;
-  background: rgba(255, 255, 255, 0.88) !important;
+  background: rgba(255, 255, 255, 0.95) !important;
   backdrop-filter: blur(14px) !important;
   border-radius: 12px !important;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.05) !important;
@@ -1062,6 +1064,8 @@ td.status-cell.pendiente { color: #53389e !important; font-weight: 800 !importan
 
 /* --- SUMMARY CARDS --- */
 .summary-section-wrap {
+  position: relative !important;
+  z-index: 1 !important;
   margin-bottom: 22px !important;
 }
 
@@ -1906,6 +1910,8 @@ td.status-cell.pendiente { color: #53389e !important; font-weight: 800 !importan
 }
 
 .history-toolbar {
+  position: relative !important;
+  z-index: 500 !important;
   display: flex !important;
   flex-wrap: wrap !important;
   gap: 12px !important;
@@ -1984,6 +1990,7 @@ td.status-cell.pendiente { color: #53389e !important; font-weight: 800 !importan
 /* --- COMPONENTE FILTRO DE DÍA ÚNICO / VARIOS DÍAS --- */
 .day-filter-dropdown-wrap {
   position: relative !important;
+  z-index: 600 !important;
   display: flex !important;
   flex-direction: column !important;
   gap: 4px !important;
@@ -2043,12 +2050,12 @@ td.status-cell.pendiente { color: #53389e !important; font-weight: 800 !importan
   position: absolute !important;
   top: calc(100% + 6px) !important;
   left: 0 !important;
-  z-index: 1000 !important;
+  z-index: 99999 !important;
   width: 320px !important;
   background: #ffffff !important;
   border: 1px solid #cbd5e1 !important;
   border-radius: 12px !important;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15) !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25) !important;
   padding: 12px !important;
   display: flex !important;
   flex-direction: column !important;
