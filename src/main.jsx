@@ -1184,13 +1184,219 @@ function TablePagination({ currentPage, totalItems, pageSize = 10, onPageChange 
   )
 }
 
+function DayFilterDropdown({ availableDays = [], selectedDays = [], onChange }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [rangeStart, setRangeStart] = useState('')
+  const [rangeEnd, setRangeEnd] = useState('')
+  const dropdownRef = useRef(null)
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false)
+      }
+    }
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isOpen])
+
+  const formatDayDisplay = (isoStr) => {
+    if (!isoStr) return ''
+    const parts = isoStr.split('-')
+    if (parts.length < 3) return isoStr
+    const d = parseCODate(`${parts[2]}/${parts[1]}/${parts[0]}`)
+    const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+    const dayName = d ? dayNames[d.getDay()] : ''
+    return `${parts[2]}/${parts[1]}/${parts[0]} (${dayName})`
+  }
+
+  const handleToggleDay = (iso) => {
+    if (selectedDays.includes(iso)) {
+      onChange(selectedDays.filter((d) => d !== iso))
+    } else {
+      onChange([...selectedDays, iso])
+    }
+  }
+
+  const handleSelectOnly = (iso, e) => {
+    e?.stopPropagation()
+    onChange([iso])
+  }
+
+  const handleSelectAll = () => {
+    onChange([])
+  }
+
+  const handleSelectToday = () => {
+    const today = getISODateString(new Date())
+    onChange([today])
+  }
+
+  const handleSelectYesterday = () => {
+    const yest = new Date()
+    yest.setDate(yest.getDate() - 1)
+    onChange([getISODateString(yest)])
+  }
+
+  const handleApplyRange = () => {
+    if (!rangeStart && !rangeEnd) return
+    const start = rangeStart || rangeEnd
+    const end = rangeEnd || rangeStart
+    const minD = start <= end ? start : end
+    const maxD = start <= end ? end : start
+    const matched = availableDays
+      .map((d) => d.iso)
+      .filter((iso) => iso >= minD && iso <= maxD)
+    onChange(matched.length > 0 ? matched : [minD])
+  }
+
+  let buttonLabel = 'Todos los días'
+  if (selectedDays.length === 1) {
+    buttonLabel = formatDayDisplay(selectedDays[0])
+  } else if (selectedDays.length > 1) {
+    buttonLabel = `${selectedDays.length} días seleccionados`
+  }
+
+  return (
+    <div className="day-filter-dropdown-wrap" ref={dropdownRef}>
+      <span className="filter-item-title">Día(s)</span>
+      <button
+        type="button"
+        className={`day-filter-trigger-btn ${selectedDays.length > 0 ? 'has-selection' : ''}`}
+        onClick={() => setIsOpen(!isOpen)}
+        title="Filtrar por uno o varios días"
+      >
+        <span className="day-filter-btn-text">{buttonLabel}</span>
+        <span className="day-filter-arrow">{isOpen ? '▲' : '▼'}</span>
+      </button>
+
+      {isOpen && (
+        <div className="day-filter-popover">
+          <div className="day-filter-presets">
+            <button
+              type="button"
+              className={`preset-chip-btn ${selectedDays.length === 0 ? 'active' : ''}`}
+              onClick={handleSelectAll}
+            >
+              Todos los días
+            </button>
+            <button
+              type="button"
+              className="preset-chip-btn"
+              onClick={handleSelectToday}
+            >
+              Hoy
+            </button>
+            <button
+              type="button"
+              className="preset-chip-btn"
+              onClick={handleSelectYesterday}
+            >
+              Ayer
+            </button>
+          </div>
+
+          <div className="day-filter-range-box">
+            <span className="range-box-label">O rango de días:</span>
+            <div className="range-inputs-row">
+              <input
+                type="date"
+                value={rangeStart}
+                onChange={(e) => setRangeStart(e.target.value)}
+                placeholder="Desde"
+                className="day-range-date-input"
+              />
+              <span className="range-separator">a</span>
+              <input
+                type="date"
+                value={rangeEnd}
+                onChange={(e) => setRangeEnd(e.target.value)}
+                placeholder="Hasta"
+                className="day-range-date-input"
+              />
+              <button
+                type="button"
+                className="apply-range-btn"
+                onClick={handleApplyRange}
+              >
+                Aplicar
+              </button>
+            </div>
+          </div>
+
+          <div className="day-filter-list-header">
+            <span>Seleccionar días:</span>
+            {selectedDays.length > 0 && (
+              <button type="button" className="clear-days-link" onClick={handleSelectAll}>
+                Limpiar selección
+              </button>
+            )}
+          </div>
+
+          <div className="day-filter-days-list">
+            {availableDays.map(({ iso, count }) => {
+              const isChecked = selectedDays.includes(iso)
+              return (
+                <div
+                  key={iso}
+                  className={`day-checkbox-item ${isChecked ? 'checked' : ''}`}
+                  onClick={() => handleToggleDay(iso)}
+                >
+                  <label className="day-checkbox-label" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => handleToggleDay(iso)}
+                    />
+                    <span className="day-text">{formatDayDisplay(iso)}</span>
+                  </label>
+                  <div className="day-item-right">
+                    <span className="day-count-badge">{count} traslados</span>
+                    <button
+                      type="button"
+                      className="only-this-day-btn"
+                      onClick={(e) => handleSelectOnly(iso, e)}
+                      title="Filtrar únicamente este día"
+                    >
+                      Solo este
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+            {availableDays.length === 0 && (
+              <div className="empty-days-notice">No hay registros con fecha válida.</div>
+            )}
+          </div>
+
+          <div className="day-filter-footer">
+            <span className="selected-summary-text">
+              {selectedDays.length === 0
+                ? 'Mostrando todos los días'
+                : `${selectedDays.length} día(s) seleccionado(s)`}
+            </span>
+            <button
+              type="button"
+              className="close-popover-btn"
+              onClick={() => setIsOpen(false)}
+            >
+              Listo
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function HistoryPage({ requests, onRefresh, onNavigate }) {
   const [query, setQuery] = useState('')
   const [selectedStatus, setSelectedStatus] = useState('TODOS')
-  const [selectedMonth, setSelectedMonth] = useState('TODOS')
-  const [selectedYear, setSelectedYear] = useState('TODOS')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  const [selectedDays, setSelectedDays] = useState([])
   const [selectedService, setSelectedService] = useState('TODOS')
   const [selectedMover, setSelectedMover] = useState('TODOS')
   const [selectedPriority, setSelectedPriority] = useState('TODOS')
@@ -1210,33 +1416,19 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [query, selectedStatus, selectedMonth, selectedYear, startDate, endDate, selectedService, selectedMover, selectedPriority, selectedTransport, selectedOxygen])
+  }, [query, selectedStatus, selectedDays, selectedService, selectedMover, selectedPriority, selectedTransport, selectedOxygen])
 
-  const monthNamesList = [
-    'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-  ]
-
-  const availableMonths = useMemo(() => {
-    const monthsSet = new Set()
+  const availableDays = useMemo(() => {
+    const map = {}
     for (const req of requests) {
-      if (req.timestamp) {
-        const date = parseCODate(req.timestamp)
-        if (date) monthsSet.add(monthNamesList[date.getMonth()])
+      const iso = getTimestampISODate(req.timestamp)
+      if (iso) {
+        map[iso] = (map[iso] || 0) + 1
       }
     }
-    return monthNamesList.filter((m) => monthsSet.has(m))
-  }, [requests])
-
-  const availableYears = useMemo(() => {
-    const yearsSet = new Set()
-    for (const req of requests) {
-      if (req.timestamp) {
-        const date = parseCODate(req.timestamp)
-        if (date) yearsSet.add(date.getFullYear().toString())
-      }
-    }
-    return Array.from(yearsSet).sort((a, b) => b - a)
+    return Object.entries(map)
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([iso, count]) => ({ iso, count }))
   }, [requests])
 
   const availableServices = useMemo(() => {
@@ -1266,32 +1458,13 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
 
   const filteredRequests = useMemo(() => {
     return historyRequests.filter((req) => {
-      const date = parseCODate(req.timestamp)
-      
       if (selectedStatus !== 'TODOS') {
         if (String(req.status || '').toUpperCase() !== selectedStatus.toUpperCase()) return false
       }
 
-      if (startDate || endDate) {
+      if (selectedDays.length > 0) {
         const reqDateStr = getTimestampISODate(req.timestamp)
-        if (!reqDateStr) return false
-        if (startDate && endDate) {
-          if (reqDateStr < startDate || reqDateStr > endDate) return false
-        } else if (startDate) {
-          if (reqDateStr !== startDate) return false
-        } else if (endDate) {
-          if (reqDateStr !== endDate) return false
-        }
-      } else {
-        if (date) {
-          if (selectedMonth !== 'TODOS') {
-            const reqMonth = monthNamesList[date.getMonth()]
-            if (reqMonth !== selectedMonth) return false
-          }
-          if (selectedYear !== 'TODOS') {
-            if (date.getFullYear().toString() !== selectedYear) return false
-          }
-        }
+        if (!reqDateStr || !selectedDays.includes(reqDateStr)) return false
       }
 
       if (selectedService !== 'TODOS' && (req.service || '').toLowerCase() !== selectedService.toLowerCase()) return false
@@ -1308,7 +1481,7 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
 
       return true
     })
-  }, [historyRequests, query, selectedStatus, selectedMonth, selectedYear, startDate, endDate, selectedService, selectedMover, selectedPriority, selectedTransport, selectedOxygen])
+  }, [historyRequests, query, selectedStatus, selectedDays, selectedService, selectedMover, selectedPriority, selectedTransport, selectedOxygen])
 
   const totalCount = filteredRequests.length
   const completedCount = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'REALIZADO').length
@@ -1380,38 +1553,11 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
           />
         </label>
 
-        <label className="filter-select">
-          <span>Fecha Desde (Día)</span>
-          <input
-            type="date"
-            className="filter-date-input"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            title="Selecciona fecha inicial o día único"
-          />
-        </label>
-
-        <label className="filter-select">
-          <span>Fecha Hasta (Día)</span>
-          <input
-            type="date"
-            className="filter-date-input"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            title="Selecciona fecha final para rango de días"
-          />
-        </label>
-
-        {(startDate || endDate) && (
-          <button
-            type="button"
-            className="clear-date-filter-btn"
-            onClick={() => { setStartDate(''); setEndDate('') }}
-            title="Quitar filtro de días y volver a todos los días"
-          >
-            ✕ Limpiar Días
-          </button>
-        )}
+        <DayFilterDropdown
+          availableDays={availableDays}
+          selectedDays={selectedDays}
+          onChange={setSelectedDays}
+        />
 
         <label className="filter-select">
           <span>Estado</span>
@@ -1419,26 +1565,6 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
             <option value="TODOS">Todos (Realizados y No realizados)</option>
             <option value="REALIZADO">Realizados</option>
             <option value="NO REALIZADO">No realizados</option>
-          </select>
-        </label>
-
-        <label className="filter-select">
-          <span>Mes</span>
-          <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}>
-            <option value="TODOS">Todos los meses</option>
-            {availableMonths.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
-        </label>
-
-        <label className="filter-select">
-          <span>Año</span>
-          <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)}>
-            <option value="TODOS">Todos los años</option>
-            {availableYears.map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
           </select>
         </label>
 
@@ -1655,10 +1781,7 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
   const [passwordError, setPasswordError] = useState('')
   const [query, setQuery] = useState('')
   const [selectedStatus, setSelectedStatus] = useState('TODOS')
-  const [selectedMonth, setSelectedMonth] = useState('TODOS')
-  const [selectedYear, setSelectedYear] = useState('TODOS')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  const [selectedDays, setSelectedDays] = useState([])
   const [selectedService, setSelectedService] = useState('TODOS')
   const [selectedMover, setSelectedMover] = useState('TODOS')
   const [selectedPriority, setSelectedPriority] = useState('TODOS')
@@ -1686,7 +1809,7 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [query, selectedStatus, selectedMonth, selectedYear, startDate, endDate, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport])
+  }, [query, selectedStatus, selectedDays, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport])
 
   useEffect(() => {
     const liveTimer = setInterval(() => {
@@ -1727,26 +1850,17 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
     }, 300)
   }
 
-  const availableMonths = useMemo(() => {
-    const monthsSet = new Set()
+  const availableDays = useMemo(() => {
+    const map = {}
     for (const req of requests) {
-      if (req.timestamp) {
-        const date = parseCODate(req.timestamp)
-        if (date) monthsSet.add(monthNames[date.getMonth()])
+      const iso = getTimestampISODate(req.timestamp)
+      if (iso) {
+        map[iso] = (map[iso] || 0) + 1
       }
     }
-    return monthNames.filter((m) => monthsSet.has(m))
-  }, [requests])
-
-  const availableYears = useMemo(() => {
-    const yearsSet = new Set()
-    for (const req of requests) {
-      if (req.timestamp) {
-        const date = parseCODate(req.timestamp)
-        if (date) yearsSet.add(date.getFullYear().toString())
-      }
-    }
-    return Array.from(yearsSet).sort((a, b) => b - a)
+    return Object.entries(map)
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([iso, count]) => ({ iso, count }))
   }, [requests])
 
   const availableServices = useMemo(() => {
@@ -1770,32 +1884,13 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
   const filteredRequests = useMemo(() => {
     const q = query.trim().toLowerCase()
     return requests.filter((req) => {
-      const date = parseCODate(req.timestamp)
-
-      if (startDate || endDate) {
-        const reqDateStr = getTimestampISODate(req.timestamp)
-        if (!reqDateStr) return false
-        if (startDate && endDate) {
-          if (reqDateStr < startDate || reqDateStr > endDate) return false
-        } else if (startDate) {
-          if (reqDateStr !== startDate) return false
-        } else if (endDate) {
-          if (reqDateStr !== endDate) return false
-        }
-      } else {
-        if (date) {
-          if (selectedMonth !== 'TODOS') {
-            const reqMonth = monthNames[date.getMonth()]
-            if (reqMonth !== selectedMonth) return false
-          }
-          if (selectedYear !== 'TODOS') {
-            if (date.getFullYear().toString() !== selectedYear) return false
-          }
-        }
-      }
-
       if (selectedStatus !== 'TODOS') {
         if (String(req.status || '').toUpperCase() !== selectedStatus.toUpperCase()) return false
+      }
+
+      if (selectedDays.length > 0) {
+        const reqDateStr = getTimestampISODate(req.timestamp)
+        if (!reqDateStr || !selectedDays.includes(reqDateStr)) return false
       }
 
       if (selectedService !== 'TODOS') {
@@ -1834,7 +1929,7 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
 
       return true
     })
-  }, [requests, selectedMonth, selectedYear, startDate, endDate, selectedStatus, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport, query])
+  }, [requests, selectedDays, selectedStatus, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport, query])
 
   const paginatedRequests = useMemo(() => {
     const start = (currentPage - 1) * 10
@@ -2272,38 +2367,11 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
             />
           </label>
 
-          <label className="compact-filter-item">
-            <span>Fecha Desde (Día)</span>
-            <input
-              type="date"
-              className="filter-date-input"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              title="Selecciona fecha inicial o día único"
-            />
-          </label>
-
-          <label className="compact-filter-item">
-            <span>Fecha Hasta (Día)</span>
-            <input
-              type="date"
-              className="filter-date-input"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              title="Selecciona fecha final para rango de días"
-            />
-          </label>
-
-          {(startDate || endDate) && (
-            <button
-              type="button"
-              className="clear-date-filter-btn"
-              onClick={() => { setStartDate(''); setEndDate('') }}
-              title="Quitar filtro de días y volver a todos los días"
-            >
-              ✕ Limpiar Días
-            </button>
-          )}
+          <DayFilterDropdown
+            availableDays={availableDays}
+            selectedDays={selectedDays}
+            onChange={setSelectedDays}
+          />
 
           <label className="compact-filter-item">
             <span>Estado</span>
@@ -2312,26 +2380,6 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
               <option value="REALIZADO">Realizados</option>
               <option value="PENDIENTE">Pendientes</option>
               <option value="NO REALIZADO">No realizados</option>
-            </select>
-          </label>
-
-          <label className="compact-filter-item">
-            <span>Mes</span>
-            <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}>
-              <option value="TODOS">Todos</option>
-              {availableMonths.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="compact-filter-item">
-            <span>Año</span>
-            <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)}>
-              <option value="TODOS">Todos</option>
-              {availableYears.map((y) => (
-                <option key={y} value={y}>{y}</option>
-              ))}
             </select>
           </label>
 
