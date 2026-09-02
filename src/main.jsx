@@ -172,6 +172,19 @@ const parseCODate = (dateStr) => {
   return new Date(year, month, day)
 }
 
+const getISODateString = (date) => {
+  if (!date || isNaN(date.getTime())) return ''
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+const getTimestampISODate = (timestampStr) => {
+  const d = parseCODate(timestampStr)
+  return d ? getISODateString(d) : ''
+}
+
 const calculateDurationMinutes = (startStr, endStr) => {
   const dStart = parseCODate(startStr)
   const dEnd = parseCODate(endStr)
@@ -1176,6 +1189,8 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
   const [selectedStatus, setSelectedStatus] = useState('TODOS')
   const [selectedMonth, setSelectedMonth] = useState('TODOS')
   const [selectedYear, setSelectedYear] = useState('TODOS')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [selectedService, setSelectedService] = useState('TODOS')
   const [selectedMover, setSelectedMover] = useState('TODOS')
   const [selectedPriority, setSelectedPriority] = useState('TODOS')
@@ -1195,7 +1210,7 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [query, selectedStatus, selectedMonth, selectedYear, selectedService, selectedMover, selectedPriority, selectedTransport, selectedOxygen])
+  }, [query, selectedStatus, selectedMonth, selectedYear, startDate, endDate, selectedService, selectedMover, selectedPriority, selectedTransport, selectedOxygen])
 
   const monthNamesList = [
     'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -1257,13 +1272,25 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
         if (String(req.status || '').toUpperCase() !== selectedStatus.toUpperCase()) return false
       }
 
-      if (date) {
-        if (selectedMonth !== 'TODOS') {
-          const reqMonth = monthNamesList[date.getMonth()]
-          if (reqMonth !== selectedMonth) return false
+      if (startDate || endDate) {
+        const reqDateStr = getTimestampISODate(req.timestamp)
+        if (!reqDateStr) return false
+        if (startDate && endDate) {
+          if (reqDateStr < startDate || reqDateStr > endDate) return false
+        } else if (startDate) {
+          if (reqDateStr !== startDate) return false
+        } else if (endDate) {
+          if (reqDateStr !== endDate) return false
         }
-        if (selectedYear !== 'TODOS') {
-          if (date.getFullYear().toString() !== selectedYear) return false
+      } else {
+        if (date) {
+          if (selectedMonth !== 'TODOS') {
+            const reqMonth = monthNamesList[date.getMonth()]
+            if (reqMonth !== selectedMonth) return false
+          }
+          if (selectedYear !== 'TODOS') {
+            if (date.getFullYear().toString() !== selectedYear) return false
+          }
         }
       }
 
@@ -1281,7 +1308,7 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
 
       return true
     })
-  }, [historyRequests, query, selectedStatus, selectedMonth, selectedYear, selectedService, selectedMover, selectedPriority, selectedTransport, selectedOxygen])
+  }, [historyRequests, query, selectedStatus, selectedMonth, selectedYear, startDate, endDate, selectedService, selectedMover, selectedPriority, selectedTransport, selectedOxygen])
 
   const totalCount = filteredRequests.length
   const completedCount = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'REALIZADO').length
@@ -1352,6 +1379,39 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
             placeholder="Buscar ID único (TR-1001), paciente, registro, destino..."
           />
         </label>
+
+        <label className="filter-select">
+          <span>Fecha Desde (Día)</span>
+          <input
+            type="date"
+            className="filter-date-input"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            title="Selecciona fecha inicial o día único"
+          />
+        </label>
+
+        <label className="filter-select">
+          <span>Fecha Hasta (Día)</span>
+          <input
+            type="date"
+            className="filter-date-input"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            title="Selecciona fecha final para rango de días"
+          />
+        </label>
+
+        {(startDate || endDate) && (
+          <button
+            type="button"
+            className="clear-date-filter-btn"
+            onClick={() => { setStartDate(''); setEndDate('') }}
+            title="Quitar filtro de días y volver a todos los días"
+          >
+            ✕ Limpiar Días
+          </button>
+        )}
 
         <label className="filter-select">
           <span>Estado</span>
@@ -1597,6 +1657,8 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
   const [selectedStatus, setSelectedStatus] = useState('TODOS')
   const [selectedMonth, setSelectedMonth] = useState('TODOS')
   const [selectedYear, setSelectedYear] = useState('TODOS')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [selectedService, setSelectedService] = useState('TODOS')
   const [selectedMover, setSelectedMover] = useState('TODOS')
   const [selectedPriority, setSelectedPriority] = useState('TODOS')
@@ -1624,7 +1686,7 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [query, selectedStatus, selectedMonth, selectedYear, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport])
+  }, [query, selectedStatus, selectedMonth, selectedYear, startDate, endDate, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport])
 
   useEffect(() => {
     const liveTimer = setInterval(() => {
@@ -1710,13 +1772,25 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
     return requests.filter((req) => {
       const date = parseCODate(req.timestamp)
 
-      if (date) {
-        if (selectedMonth !== 'TODOS') {
-          const reqMonth = monthNames[date.getMonth()]
-          if (reqMonth !== selectedMonth) return false
+      if (startDate || endDate) {
+        const reqDateStr = getTimestampISODate(req.timestamp)
+        if (!reqDateStr) return false
+        if (startDate && endDate) {
+          if (reqDateStr < startDate || reqDateStr > endDate) return false
+        } else if (startDate) {
+          if (reqDateStr !== startDate) return false
+        } else if (endDate) {
+          if (reqDateStr !== endDate) return false
         }
-        if (selectedYear !== 'TODOS') {
-          if (date.getFullYear().toString() !== selectedYear) return false
+      } else {
+        if (date) {
+          if (selectedMonth !== 'TODOS') {
+            const reqMonth = monthNames[date.getMonth()]
+            if (reqMonth !== selectedMonth) return false
+          }
+          if (selectedYear !== 'TODOS') {
+            if (date.getFullYear().toString() !== selectedYear) return false
+          }
         }
       }
 
@@ -1760,7 +1834,7 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
 
       return true
     })
-  }, [requests, selectedMonth, selectedYear, selectedStatus, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport, query])
+  }, [requests, selectedMonth, selectedYear, startDate, endDate, selectedStatus, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport, query])
 
   const paginatedRequests = useMemo(() => {
     const start = (currentPage - 1) * 10
@@ -2197,6 +2271,39 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
               placeholder="Buscar ID único, paciente, registro, destino..."
             />
           </label>
+
+          <label className="compact-filter-item">
+            <span>Fecha Desde (Día)</span>
+            <input
+              type="date"
+              className="filter-date-input"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              title="Selecciona fecha inicial o día único"
+            />
+          </label>
+
+          <label className="compact-filter-item">
+            <span>Fecha Hasta (Día)</span>
+            <input
+              type="date"
+              className="filter-date-input"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              title="Selecciona fecha final para rango de días"
+            />
+          </label>
+
+          {(startDate || endDate) && (
+            <button
+              type="button"
+              className="clear-date-filter-btn"
+              onClick={() => { setStartDate(''); setEndDate('') }}
+              title="Quitar filtro de días y volver a todos los días"
+            >
+              ✕ Limpiar Días
+            </button>
+          )}
 
           <label className="compact-filter-item">
             <span>Estado</span>
