@@ -46,7 +46,14 @@ export default async function handler(req, res) {
         s.timestamp, s.assignmentTime || s.assignment_time || null, s.movementTime || s.movement_time || 'pendiente',
         (s.priority || 'media').toLowerCase().trim()
       ]
-      await executeTurso([{ sql, args }])
+      const updateSyncSql = `
+        INSERT OR REPLACE INTO app_sync_state (id, version, updated_at)
+        VALUES ('global', COALESCE((SELECT version FROM app_sync_state WHERE id = 'global'), 0) + 1, datetime('now'));
+      `
+      await executeTurso([
+        { sql, args },
+        { sql: updateSyncSql }
+      ])
       const bodyData = { success: true, id: s.id }
 
       if (isNetlify) {

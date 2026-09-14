@@ -205,6 +205,8 @@ const formatDuration = (mins) => {
 const TURSO_URL = 'https://camilleros-pancachogod.aws-us-east-1.turso.io/v2/pipeline'
 const TURSO_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MTg4NTMzNTgsImlhdCI6MTc4NzMxNzM1OCwiaWQiOiIwMWEwMjQ2Ni1hYTAxLTc2ZjYtYTYxYy1kMzQ0MWQ3NWE3NTkiLCJraWQiOiIyNjZrdmlFLUNOQ2lhSl9sckdRS3M3YzhORTJGVVRKWVAwVTFNRURESVk4IiwicmlkIjoiNjYwY2RmMjAtNzMwNy00OTU1LTkyYWUtM2I4M2Q2NDQ4NjJkIn0.UDHRye68UfBbA7wNccw56M5Gefvc6YLoF2WJKloAJ1cuzMtuubuWdUCy8-klH_XWiOYNosbIOEqStLNknvKkAQ'
 
+let localSyncVersion = typeof window !== 'undefined' ? parseInt(window.localStorage.getItem('turno_sync_version') || '0', 10) : 0
+
 async function directTursoExecute(statements) {
   const payload = JSON.stringify({
     requests: statements.map(s => {
@@ -247,14 +249,38 @@ function parseTursoResult(result) {
   })
 }
 
-const fetchApiSync = async () => {
+const fetchApiSync = async (force = false) => {
   try {
+    // 1. Verificación ultra-rápida de 1 sola fila para no consumir lecturas de la base de datos
+    if (!force && readRequests().length > 0 && localSyncVersion > 0) {
+      const verRes = await directTursoExecute([
+        { sql: 'SELECT version FROM app_sync_state WHERE id = "global";' }
+      ])
+      const verResult = verRes.results[0]?.response?.result
+      const verRows = parseTursoResult(verResult)
+      const remoteVer = verRows.length > 0 ? parseInt(verRows[0].version, 10) : 0
+
+      // Si la versión no ha cambiado, no leemos las 1600 filas de traslados (0 lecturas innecesarias)
+      if (remoteVer > 0 && remoteVer === localSyncVersion) {
+        return null
+      }
+    }
+
+    // 2. Si es la primera carga, se presionó actualizar o hubo cambios, descargamos los datos
     const res = await directTursoExecute([
       { sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;' },
-      { sql: 'SELECT name FROM camilleros_personal WHERE active = 1 ORDER BY name ASC;' }
+      { sql: 'SELECT name FROM camilleros_personal WHERE active = 1 ORDER BY name ASC;' },
+      { sql: 'SELECT version FROM app_sync_state WHERE id = "global";' }
     ])
     const requestsResult = res.results[0]?.response?.result
     const camillerosResult = res.results[1]?.response?.result
+    const verResult = res.results[2]?.response?.result
+
+    const verRows = parseTursoResult(verResult)
+    if (verRows.length > 0 && verRows[0].version) {
+      localSyncVersion = parseInt(verRows[0].version, 10)
+      window.localStorage.setItem('turno_sync_version', String(localSyncVersion))
+    }
 
     const rawRequests = parseTursoResult(requestsResult)
     const rawCamilleros = parseTursoResult(camillerosResult).map(r => r.name)
@@ -345,7 +371,16 @@ const saveApiRequest = async (request) => {
       request.timestamp, request.assignmentTime || request.assignment_time || null, request.movementTime || request.movement_time || 'pendiente',
       (request.priority || 'media').trim().toLowerCase()
     ]
-    await directTursoExecute([{ sql, args }])
+    const updateSyncSql = `
+      INSERT OR REPLACE INTO app_sync_state (id, version, updated_at)
+      VALUES ('global', COALESCE((SELECT version FROM app_sync_state WHERE id = 'global'), 0) + 1, datetime('now'));
+    `
+    await directTursoExecute([
+      { sql, args },
+      { sql: updateSyncSql }
+    ])
+    localSyncVersion += 1
+    window.localStorage.setItem('turno_sync_version', String(localSyncVersion))
   } catch (err) {
     try {
       await fetch('/api/solicitudes', {
@@ -360,18 +395,30 @@ const saveApiRequest = async (request) => {
 const saveApiCamillero = async (name, action = 'POST') => {
   const cleanName = (name || '').toLowerCase().trim()
   if (!cleanName) return
+  const updateSyncSql = `
+    INSERT OR REPLACE INTO app_sync_state (id, version, updated_at)
+    VALUES ('global', COALESCE((SELECT version FROM app_sync_state WHERE id = 'global'), 0) + 1, datetime('now'));
+  `
   try {
     if (action === 'DELETE') {
-      await directTursoExecute([{
-        sql: 'DELETE FROM camilleros_personal WHERE LOWER(TRIM(name)) = ?;',
-        args: [cleanName]
-      }])
+      await directTursoExecute([
+        {
+          sql: 'DELETE FROM camilleros_personal WHERE LOWER(TRIM(name)) = ?;',
+          args: [cleanName]
+        },
+        { sql: updateSyncSql }
+      ])
     } else {
-      await directTursoExecute([{
-        sql: 'INSERT OR REPLACE INTO camilleros_personal (name, active) VALUES (?, 1);',
-        args: [cleanName]
-      }])
+      await directTursoExecute([
+        {
+          sql: 'INSERT OR REPLACE INTO camilleros_personal (name, active) VALUES (?, 1);',
+          args: [cleanName]
+        },
+        { sql: updateSyncSql }
+      ])
     }
+    localSyncVersion += 1
+    window.localStorage.setItem('turno_sync_version', String(localSyncVersion))
   } catch (err) {
     try {
       await fetch('/api/camilleros', {
@@ -400,8 +447,8 @@ function App() {
   useEffect(() => {
     let mounted = true
 
-    const doSync = async () => {
-      const data = await fetchApiSync()
+    const doSync = async (force = false) => {
+      const data = await fetchApiSync(force)
       if (mounted && data) {
         if (data.requests) setRequests(data.requests)
         if (data.camilleros && Date.now() - lastCamillerosMutationRef.current > 4000) {
@@ -410,13 +457,15 @@ function App() {
       }
     }
 
-    doSync()
+    // Carga inicial completa
+    doSync(true)
 
+    // Polling inteligente optimizado (cada 6s cuando la pestaña está activa)
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && !document.hidden) {
-        doSync()
+        doSync(false)
       }
-    }, 3500)
+    }, 6000)
 
     const onPopState = () => {
       setRequests(readRequests())
@@ -425,11 +474,13 @@ function App() {
     }
     const onVisibilityChange = () => {
       if (typeof document !== 'undefined' && !document.hidden) {
-        doSync()
+        doSync(false)
       }
     }
     const onFocus = () => {
-      doSync()
+      if (typeof document !== 'undefined' && !document.hidden) {
+        doSync(false)
+      }
     }
     window.addEventListener('popstate', onPopState)
     window.addEventListener('focus', onFocus)
@@ -463,17 +514,13 @@ function App() {
     }
   }, [])
 
-  const handleRefresh = async () => {
-    const apiReqs = await fetchApiRequests()
-    if (apiReqs) {
-      setRequests(apiReqs)
+  const handleRefresh = async (force = true) => {
+    const data = await fetchApiSync(force)
+    if (data) {
+      if (data.requests) setRequests(data.requests)
+      if (data.camilleros) setCamilleros(data.camilleros)
     } else {
       setRequests(readRequests())
-    }
-    const apiCams = await fetchApiCamilleros()
-    if (apiCams) {
-      setCamilleros(apiCams)
-    } else {
       setCamilleros(readCamilleros())
     }
   }
@@ -746,14 +793,6 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
   const [editError, setEditError] = useState('')
   const [editDraft, setEditDraft] = useState({ status: 'PENDIENTE', mover: '', centralObservation: '' })
 
-  useEffect(() => {
-    if (onRefresh) onRefresh()
-    const autoRefreshTimer = setInterval(() => {
-      if (onRefresh) onRefresh()
-    }, 60000)
-    return () => clearInterval(autoRefreshTimer)
-  }, [onRefresh])
-
   // Solo traslados PENDIENTES en la Central de Camilleros (Realizados y No Realizados van al Historial)
   const activeRequests = useMemo(() => {
     return requests.filter((r) => String(r.status || '').toUpperCase() === 'PENDIENTE')
@@ -774,7 +813,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
 
   const triggerRefresh = () => {
     setRefreshState('refreshing')
-    if (onRefresh) onRefresh()
+    if (onRefresh) onRefresh(true)
     setTimeout(() => {
       setRefreshState('success')
       setTimeout(() => setRefreshState('idle'), 1000)
@@ -1407,14 +1446,6 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
   const [detailRequest, setDetailRequest] = useState(null)
 
   useEffect(() => {
-    if (onRefresh) onRefresh()
-    const autoRefreshTimer = setInterval(() => {
-      if (onRefresh) onRefresh()
-    }, 60000)
-    return () => clearInterval(autoRefreshTimer)
-  }, [onRefresh])
-
-  useEffect(() => {
     setCurrentPage(1)
   }, [query, selectedStatus, selectedDays, selectedService, selectedMover, selectedPriority, selectedTransport, selectedOxygen])
 
@@ -1508,7 +1539,7 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
 
   const triggerRefresh = () => {
     setRefreshState('refreshing')
-    if (onRefresh) onRefresh()
+    if (onRefresh) onRefresh(true)
     setTimeout(() => {
       setRefreshState('success')
       setTimeout(() => setRefreshState('idle'), 1000)
@@ -1811,15 +1842,6 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
     setCurrentPage(1)
   }, [query, selectedStatus, selectedDays, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport])
 
-  useEffect(() => {
-    const liveTimer = setInterval(() => {
-      const freshReqs = readRequests()
-      setRequests(freshReqs)
-      if (onRefresh) onRefresh()
-    }, 1000)
-    return () => clearInterval(liveTimer)
-  }, [onRefresh])
-
   const handleAddCamillero = (e) => {
     e.preventDefault()
     const cleanName = formatLowercase(newCamilleroName.trim())
@@ -1841,9 +1863,7 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
 
   const triggerRefresh = () => {
     setRefreshState('refreshing')
-    const freshReqs = readRequests()
-    setRequests(freshReqs)
-    if (onRefresh) onRefresh()
+    if (onRefresh) onRefresh(true)
     setTimeout(() => {
       setRefreshState('success')
       setTimeout(() => setRefreshState('idle'), 1000)
