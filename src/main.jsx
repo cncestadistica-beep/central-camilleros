@@ -202,6 +202,15 @@ const formatDuration = (mins) => {
   return m === 0 ? `${h} h` : `${h} h ${m} min`
 }
 
+const SUPABASE_URL = 'https://vgkpnhtctbdmnnxnmlyi.supabase.co'
+const SUPABASE_ANON_KEY = 'sb_publishable_ok8owhU5nQrHW7qS6sk5kg_GlB-INgB'
+
+const supabaseHeaders = {
+  'apikey': SUPABASE_ANON_KEY,
+  'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+  'Content-Type': 'application/json'
+}
+
 const mapIncomingRequest = (item, idx) => ({
   id: item.id || `req-${idx}`,
   requestId: item.request_id || item.requestId || `TR-${1001 + idx}`,
@@ -239,47 +248,91 @@ const mergeRequests = (cachedList = [], incomingList = []) => {
 
 const fetchApiSync = async (force = false) => {
   try {
-    const res = await fetch('/api/sync')
-    if (res.ok) {
-      const json = await res.json()
-      if (json && json.success) {
-        let mappedRequests = null
-        if (Array.isArray(json.requests)) {
-          mappedRequests = json.requests.map(mapIncomingRequest)
-          
-          // Si el navegador tiene datos históricos en caché mayores a la BD, los sincroniza hacia PostgreSQL
-          const cached = readRequests()
-          if (cached.length > mappedRequests.length) {
-            mappedRequests = mergeRequests(cached, mappedRequests)
-            cached.forEach(req => saveApiRequest(req))
-          }
+    const [resReq, resCam] = await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=*&order=created_at.desc`, {
+        headers: supabaseHeaders
+      }),
+      fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal?select=name&active=eq.true&order=name.asc`, {
+        headers: supabaseHeaders
+      })
+    ])
 
-          persistRequests(mappedRequests)
-        }
-        if (Array.isArray(json.camilleros) && json.camilleros.length > 0) {
-          window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(json.camilleros))
-        }
-        return {
-          requests: mappedRequests,
-          camilleros: json.camilleros,
-        }
+    if (resReq.ok && resCam.ok) {
+      const rawRequests = await resReq.json()
+      const rawCamilleros = (await resCam.json()).map(r => r.name)
+
+      let mappedRequests = rawRequests.map(mapIncomingRequest)
+      
+      const cached = readRequests()
+      if (cached.length > mappedRequests.length) {
+        mappedRequests = mergeRequests(cached, mappedRequests)
+        // Enviar a Supabase para que quede respaldado al 100%
+        cached.forEach(req => saveApiRequest(req))
+      }
+
+      persistRequests(mappedRequests)
+      if (Array.isArray(rawCamilleros) && rawCamilleros.length > 0) {
+        window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(rawCamilleros))
+      }
+      return {
+        requests: mappedRequests,
+        camilleros: rawCamilleros,
       }
     }
   } catch (err) {
-    console.warn('Error sincronizando con API local PostgreSQL:', err.message)
+    try {
+      const res = await fetch('/api/sync')
+      if (res.ok) {
+        const json = await res.json()
+        if (json && json.success) {
+          let mappedRequests = (json.requests || []).map(mapIncomingRequest)
+          persistRequests(mappedRequests)
+          return { requests: mappedRequests, camilleros: json.camilleros }
+        }
+      }
+    } catch (_) {}
   }
   return null
 }
 
 const saveApiRequest = async (request) => {
   try {
-    await fetch('/api/solicitudes', {
+    const payload = {
+      id: request.id,
+      request_id: request.requestId || request.request_id,
+      patient: request.patient,
+      record: request.record,
+      service: request.service,
+      location: request.location,
+      destination: request.destination,
+      transport: request.transport,
+      oxygen: request.oxygen || 'no',
+      observation: request.observation || '',
+      status: request.status || 'PENDIENTE',
+      mover: request.mover || 'sin asignar',
+      central_observation: request.centralObservation || request.central_observation || '',
+      timestamp: request.timestamp,
+      assignment_time: request.assignmentTime || request.assignment_time || null,
+      movement_time: request.movementTime || request.movement_time || 'pendiente',
+      priority: (request.priority || 'media').trim().toLowerCase()
+    }
+
+    await fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
+      headers: {
+        ...supabaseHeaders,
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify(payload)
     })
   } catch (err) {
-    console.warn('Error guardando en API local PostgreSQL:', err.message)
+    try {
+      await fetch('/api/solicitudes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request)
+      })
+    } catch (_) {}
   }
 }
 
@@ -287,13 +340,30 @@ const saveApiCamillero = async (name, action = 'POST') => {
   const cleanName = (name || '').toLowerCase().trim()
   if (!cleanName) return
   try {
-    await fetch('/api/camilleros', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: cleanName, action }),
-    })
+    if (action === 'DELETE') {
+      await fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal?name=eq.${encodeURIComponent(cleanName)}`, {
+        method: 'PATCH',
+        headers: supabaseHeaders,
+        body: JSON.stringify({ active: false })
+      })
+    } else {
+      await fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal`, {
+        method: 'POST',
+        headers: {
+          ...supabaseHeaders,
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({ name: cleanName, active: true })
+      })
+    }
   } catch (err) {
-    console.warn('Error guardando camillero en API local PostgreSQL:', err.message)
+    try {
+      await fetch('/api/camilleros', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: cleanName, action })
+      })
+    } catch (_) {}
   }
 }
 
