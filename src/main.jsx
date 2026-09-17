@@ -296,9 +296,6 @@ const fetchApiSync = async (force = false) => {
       
       if (!shouldFetchAll && cached.length > 0) {
         mappedRequests = mergeRequests(cached, mappedRequests)
-      } else if (cached.length > mappedRequests.length) {
-        mappedRequests = mergeRequests(cached, mappedRequests)
-        cached.forEach(req => saveApiRequest(req))
       }
 
       persistRequests(mappedRequests)
