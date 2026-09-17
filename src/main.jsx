@@ -26,12 +26,16 @@ const requestsChannel = typeof window !== 'undefined' && 'BroadcastChannel' in w
   : null
 
 const defaultCamilleros = [
-  'victor perafán',
+  'victor perafan',
+  'carlos herreño',
   'andrés castro',
-  'juan lucas',
-  'michi jose',
-  'albajadmamad',
-  'maria gonzales',
+  'jefry arango',
+  'julián vera',
+  'cesar copete',
+  'sergio peña',
+  'stiven gonzalez',
+  'david muñoz',
+  'santiago soza',
 ]
 
 const initialForm = {
@@ -2105,8 +2109,8 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
         avgGlobal,
       }
     })
-    return list.sort((a, b) => b.count - a.count)
-  }, [filteredRequests, camilleros])
+    return list.filter((item) => item.count > 0).sort((a, b) => b.count - a.count)
+  }, [filteredRequests])
 
   // Gráfico por Servicios con Oportunidad Global, Servicio y Reacción
   const serviceStats = useMemo(() => {
