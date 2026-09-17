@@ -246,27 +246,54 @@ const mergeRequests = (cachedList = [], incomingList = []) => {
   })
 }
 
+const fetchAllSupabaseRequests = async () => {
+  let all = []
+  let page = 0
+  const pageSize = 1000
+  while (true) {
+    const from = page * pageSize
+    const to = from + pageSize - 1
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=*&order=created_at.desc`, {
+      headers: {
+        ...supabaseHeaders,
+        'Range': `${from}-${to}`
+      }
+    })
+    if (!res.ok) break
+    const items = await res.json()
+    if (!Array.isArray(items) || items.length === 0) break
+    all = all.concat(items)
+    if (items.length < pageSize) break
+    page++
+  }
+  return all
+}
+
 const fetchApiSync = async (force = false) => {
   try {
-    const [resReq, resCam] = await Promise.all([
-      fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=*&order=created_at.desc`, {
-        headers: supabaseHeaders
-      }),
+    const cached = readRequests()
+    const shouldFetchAll = force || cached.length === 0
+
+    const [rawRequests, resCam] = await Promise.all([
+      shouldFetchAll
+        ? fetchAllSupabaseRequests()
+        : fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=*&order=created_at.desc`, {
+            headers: { ...supabaseHeaders, 'Range': '0-199' }
+          }).then(r => r.ok ? r.json() : []).catch(() => []),
       fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal?select=name&active=eq.true&order=name.asc`, {
         headers: supabaseHeaders
       })
     ])
 
-    if (resReq.ok && resCam.ok) {
-      const rawRequests = await resReq.json()
-      const rawCamilleros = (await resCam.json()).map(r => r.name)
+    const rawCamilleros = resCam.ok ? (await resCam.json()).map(r => r.name) : []
 
+    if (Array.isArray(rawRequests)) {
       let mappedRequests = rawRequests.map(mapIncomingRequest)
       
-      const cached = readRequests()
-      if (cached.length > mappedRequests.length) {
+      if (!shouldFetchAll && cached.length > 0) {
         mappedRequests = mergeRequests(cached, mappedRequests)
-        // Enviar a Supabase para que quede respaldado al 100%
+      } else if (cached.length > mappedRequests.length) {
+        mappedRequests = mergeRequests(cached, mappedRequests)
         cached.forEach(req => saveApiRequest(req))
       }
 
@@ -276,7 +303,7 @@ const fetchApiSync = async (force = false) => {
       }
       return {
         requests: mappedRequests,
-        camilleros: rawCamilleros,
+        camilleros: rawCamilleros.length > 0 ? rawCamilleros : readCamilleros(),
       }
     }
   } catch (err) {
