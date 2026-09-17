@@ -1,4 +1,4 @@
-import { executeTurso, parseRows } from './turso.js'
+import { queryPg } from './db.js'
 
 export default async function handler(req, res) {
   const isNetlify = typeof res?.status !== 'function'
@@ -13,12 +13,9 @@ export default async function handler(req, res) {
     }
 
     if (method === 'GET') {
-      const response = await executeTurso([
-        'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;'
-      ])
-      const result = response.results[0]?.response?.result
-      const rows = parseRows(result)
-      const bodyData = { source: 'turso', data: rows }
+      const response = await queryPg('SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;')
+      const rows = response.rows || []
+      const bodyData = { source: 'postgres', data: rows }
 
       if (isNetlify) {
         return new Response(JSON.stringify(bodyData), {
@@ -33,27 +30,37 @@ export default async function handler(req, res) {
     if (method === 'POST') {
       const s = body
       const sql = `
-        INSERT OR REPLACE INTO solicitudes_camilleros (
+        INSERT INTO solicitudes_camilleros (
           id, request_id, patient, record, service, location, destination,
           transport, oxygen, observation, status, mover, central_observation,
           timestamp, assignment_time, movement_time, priority
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        ON CONFLICT (id) DO UPDATE SET
+          request_id = EXCLUDED.request_id,
+          patient = EXCLUDED.patient,
+          record = EXCLUDED.record,
+          service = EXCLUDED.service,
+          location = EXCLUDED.location,
+          destination = EXCLUDED.destination,
+          transport = EXCLUDED.transport,
+          oxygen = EXCLUDED.oxygen,
+          observation = EXCLUDED.observation,
+          status = EXCLUDED.status,
+          mover = EXCLUDED.mover,
+          central_observation = EXCLUDED.central_observation,
+          timestamp = EXCLUDED.timestamp,
+          assignment_time = EXCLUDED.assignment_time,
+          movement_time = EXCLUDED.movement_time,
+          priority = EXCLUDED.priority;
       `
-      const args = [
+      const values = [
         s.id, s.requestId || s.request_id, s.patient, s.record, s.service,
-        s.location, s.destination, s.transport, s.oxygen, s.observation || '',
+        s.location, s.destination, s.transport, s.oxygen || 'no', s.observation || '',
         s.status || 'PENDIENTE', s.mover || 'sin asignar', s.centralObservation || s.central_observation || '',
         s.timestamp, s.assignmentTime || s.assignment_time || null, s.movementTime || s.movement_time || 'pendiente',
         (s.priority || 'media').toLowerCase().trim()
       ]
-      const updateSyncSql = `
-        INSERT OR REPLACE INTO app_sync_state (id, version, updated_at)
-        VALUES ('global', COALESCE((SELECT version FROM app_sync_state WHERE id = 'global'), 0) + 1, datetime('now'));
-      `
-      await executeTurso([
-        { sql, args },
-        { sql: updateSyncSql }
-      ])
+      await queryPg(sql, values)
       const bodyData = { success: true, id: s.id }
 
       if (isNetlify) {
@@ -69,7 +76,7 @@ export default async function handler(req, res) {
     if (isNetlify) return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 })
     return res.status(405).json({ error: 'Método no permitido' })
   } catch (error) {
-    console.error('Error en API solicitudes (Turso):', error.message)
+    console.error('Error en API solicitudes (PostgreSQL):', error.message)
     if (isNetlify) {
       return new Response(JSON.stringify({ error: error.message }), {
         status: 500,

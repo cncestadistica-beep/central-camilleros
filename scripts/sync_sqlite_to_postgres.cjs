@@ -1,4 +1,4 @@
-﻿const sqlite3 = require('sqlite3').verbose();
+const sqlite3 = require('sqlite3').verbose();
 const { Pool } = require('pg');
 const path = require('path');
 require('dotenv').config();
@@ -34,8 +34,8 @@ async function sync() {
           INSERT INTO solicitudes_camilleros (
             id, request_id, patient, record, service, location, destination,
             transport, oxygen, observation, status, mover, central_observation,
-            timestamp, assignment_time, movement_time, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            timestamp, assignment_time, movement_time, priority, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
           ON CONFLICT (id) DO UPDATE SET
             request_id = EXCLUDED.request_id,
             patient = EXCLUDED.patient,
@@ -51,13 +51,16 @@ async function sync() {
             central_observation = EXCLUDED.central_observation,
             timestamp = EXCLUDED.timestamp,
             assignment_time = EXCLUDED.assignment_time,
-            movement_time = EXCLUDED.movement_time;
+            movement_time = EXCLUDED.movement_time,
+            priority = EXCLUDED.priority;
         `;
         const values = [
           s.id, s.request_id, s.patient, s.record, s.service,
           s.location, s.destination, s.transport, s.oxygen, s.observation,
           s.status, s.mover, s.central_observation,
-          s.timestamp, s.assignment_time, s.movement_time, s.created_at || new Date()
+          s.timestamp, s.assignment_time, s.movement_time,
+          (s.priority || 'media').toLowerCase().trim(),
+          s.created_at || new Date()
         ];
         await client.query(query, values);
         count++;

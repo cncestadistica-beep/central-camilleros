@@ -1,4 +1,4 @@
-﻿import { executeTurso, parseRows } from './turso.js'
+import { queryPg } from './db.js'
 
 export default async function handler(req, res) {
   const isNetlify = typeof res?.status !== 'function'
@@ -6,16 +6,11 @@ export default async function handler(req, res) {
 
   try {
     if (method === 'GET') {
-      const response = await executeTurso([
-        { type: 'execute', stmt: { sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;' } },
-        { type: 'execute', stmt: { sql: 'SELECT name FROM camilleros_personal WHERE active = 1 ORDER BY name ASC;' } }
-      ])
+      const requestsRes = await queryPg('SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;')
+      const camillerosRes = await queryPg('SELECT name FROM camilleros_personal WHERE active = true ORDER BY name ASC;')
 
-      const requestsResult = response.results[0]?.response?.result
-      const camillerosResult = response.results[1]?.response?.result
-
-      const requests = parseRows(requestsResult)
-      const camilleros = parseRows(camillerosResult).map(r => r.name)
+      const requests = requestsRes.rows || []
+      const camilleros = (camillerosRes.rows || []).map(r => r.name)
       const bodyData = { success: true, requests, camilleros }
 
       if (isNetlify) {
@@ -31,7 +26,7 @@ export default async function handler(req, res) {
     if (isNetlify) return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 })
     return res.status(405).json({ error: 'Método no permitido' })
   } catch (error) {
-    console.error('Error en API sync (Turso):', error.message)
+    console.error('Error en API sync (PostgreSQL):', error.message)
     if (isNetlify) {
       return new Response(JSON.stringify({ error: error.message }), {
         status: 500,

@@ -202,52 +202,25 @@ const formatDuration = (mins) => {
   return m === 0 ? `${h} h` : `${h} h ${m} min`
 }
 
-const TURSO_URL = 'https://camilleros-pancachogod.aws-us-east-1.turso.io/v2/pipeline'
-const TURSO_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MTg4NTMzNTgsImlhdCI6MTc4NzMxNzM1OCwiaWQiOiIwMWEwMjQ2Ni1hYTAxLTc2ZjYtYTYxYy1kMzQ0MWQ3NWE3NTkiLCJraWQiOiIyNjZrdmlFLUNOQ2lhSl9sckdRS3M3YzhORTJGVVRKWVAwVTFNRURESVk4IiwicmlkIjoiNjYwY2RmMjAtNzMwNy00OTU1LTkyYWUtM2I4M2Q2NDQ4NjJkIn0.UDHRye68UfBbA7wNccw56M5Gefvc6YLoF2WJKloAJ1cuzMtuubuWdUCy8-klH_XWiOYNosbIOEqStLNknvKkAQ'
-
-let localSyncVersion = typeof window !== 'undefined' ? parseInt(window.localStorage.getItem('turno_sync_version') || '0', 10) : 0
-
-async function directTursoExecute(statements) {
-  const payload = JSON.stringify({
-    requests: statements.map(s => {
-      if (typeof s === 'string') return { type: 'execute', stmt: { sql: s } }
-      return {
-        type: 'execute',
-        stmt: {
-          sql: s.sql,
-          args: (s.args || []).map(val => {
-            if (val === null || val === undefined) return { type: 'null' }
-            if (typeof val === 'number') return { type: 'integer', value: String(val) }
-            return { type: 'text', value: String(val) }
-          })
-        }
-      }
-    })
-  })
-
-  const res = await fetch(TURSO_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${TURSO_TOKEN}`,
-      'Content-Type': 'application/json'
-    },
-    body: payload
-  })
-  if (!res.ok) throw new Error(`Turso HTTP ${res.status}`)
-  return await res.json()
-}
-
-function parseTursoResult(result) {
-  if (!result || !result.cols || !result.rows) return []
-  const cols = result.cols.map(c => c.name)
-  return result.rows.map(row => {
-    const obj = {}
-    cols.forEach((col, idx) => {
-      obj[col] = row[idx] ? row[idx].value : null
-    })
-    return obj
-  })
-}
+const mapIncomingRequest = (item, idx) => ({
+  id: item.id || `req-${idx}`,
+  requestId: item.request_id || item.requestId || `TR-${1001 + idx}`,
+  patient: formatPatientName(item.patient || ''),
+  record: item.record ? String(item.record) : '',
+  location: item.location || '',
+  destination: item.destination || '',
+  service: item.service || '',
+  transport: item.transport || '',
+  oxygen: item.oxygen || '',
+  observation: item.observation || '',
+  mover: item.mover || 'sin asignar',
+  centralObservation: item.central_observation || item.centralObservation || '',
+  status: String(item.status || 'PENDIENTE').toUpperCase(),
+  timestamp: item.timestamp || '',
+  assignmentTime: item.assignment_time || item.assignmentTime || null,
+  movementTime: item.movement_time || item.movementTime || 'pendiente',
+  priority: (item.priority || 'media').trim().toLowerCase(),
+})
 
 const mergeRequests = (cachedList = [], incomingList = []) => {
   const map = new Map()
@@ -266,195 +239,61 @@ const mergeRequests = (cachedList = [], incomingList = []) => {
 
 const fetchApiSync = async (force = false) => {
   try {
-    const cachedRequests = readRequests()
-
-    // 1. Verificación ultra-rápida de 1 sola fila para no consumir lecturas de la base de datos
-    if (!force && cachedRequests.length > 0 && localSyncVersion > 0) {
-      const verRes = await directTursoExecute([
-        { sql: 'SELECT version FROM app_sync_state WHERE id = "global";' }
-      ])
-      const verResult = verRes.results[0]?.response?.result
-      const verRows = parseTursoResult(verResult)
-      const remoteVer = verRows.length > 0 ? parseInt(verRows[0].version, 10) : 0
-
-      // Si la versión no ha cambiado, no leemos nada adicional (0 lecturas innecesarias)
-      if (remoteVer > 0 && remoteVer === localSyncVersion) {
-        return null
-      }
-    }
-
-    // 2. Si es actualización incremental en vivo, solo descargamos lo activo y reciente (últimos 3 días o pendientes)
-    // usando los índices de la base de datos para consumir un 98% menos de lecturas.
-    const isIncremental = !force && cachedRequests.length > 0
-    const sqlRequests = isIncremental
-      ? "SELECT * FROM solicitudes_camilleros WHERE status = 'PENDIENTE' OR created_at >= datetime('now', '-3 days') ORDER BY created_at DESC;"
-      : "SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;"
-
-    const res = await directTursoExecute([
-      { sql: sqlRequests },
-      { sql: 'SELECT name FROM camilleros_personal WHERE active = 1 ORDER BY name ASC;' },
-      { sql: 'SELECT version FROM app_sync_state WHERE id = "global";' }
-    ])
-    const requestsResult = res.results[0]?.response?.result
-    const camillerosResult = res.results[1]?.response?.result
-    const verResult = res.results[2]?.response?.result
-
-    const verRows = parseTursoResult(verResult)
-    if (verRows.length > 0 && verRows[0].version) {
-      localSyncVersion = parseInt(verRows[0].version, 10)
-      window.localStorage.setItem('turno_sync_version', String(localSyncVersion))
-    }
-
-    const rawRequests = parseTursoResult(requestsResult)
-    const rawCamilleros = parseTursoResult(camillerosResult).map(r => r.name)
-
-    const incomingMapped = rawRequests.map((item, idx) => ({
-      id: item.id || `req-${idx}`,
-      requestId: item.request_id || item.requestId || `TR-${1001 + idx}`,
-      patient: formatPatientName(item.patient || ''),
-      record: item.record ? String(item.record) : '',
-      location: item.location || '',
-      destination: item.destination || '',
-      service: item.service || '',
-      transport: item.transport || '',
-      oxygen: item.oxygen || '',
-      observation: item.observation || '',
-      mover: item.mover || 'sin asignar',
-      centralObservation: item.central_observation || item.centralObservation || '',
-      status: String(item.status || 'PENDIENTE').toUpperCase(),
-      timestamp: item.timestamp || '',
-      assignmentTime: item.assignment_time || item.assignmentTime || null,
-      movementTime: item.movement_time || item.movementTime || 'pendiente',
-      priority: (item.priority || 'media').trim().toLowerCase(),
-    }))
-
-    const finalRequests = isIncremental
-      ? mergeRequests(cachedRequests, incomingMapped)
-      : incomingMapped
-
-    persistRequests(finalRequests)
-    if (Array.isArray(rawCamilleros)) {
-      window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(rawCamilleros))
-    }
-    return {
-      requests: finalRequests,
-      camilleros: rawCamilleros,
-    }
-  } catch (err) {
-    try {
-      const res = await fetch('/api/sync')
-      if (res.ok) {
-        const json = await res.json()
-        if (json && json.success) {
-          let mappedRequests = null
-          if (Array.isArray(json.requests)) {
-            mappedRequests = json.requests.map((item, idx) => ({
-              id: item.id || `req-${idx}`,
-              requestId: item.request_id || item.requestId || `TR-${1001 + idx}`,
-              patient: formatPatientName(item.patient || ''),
-              record: item.record ? String(item.record) : '',
-              location: item.location || '',
-              destination: item.destination || '',
-              service: item.service || '',
-              transport: item.transport || '',
-              oxygen: item.oxygen || '',
-              observation: item.observation || '',
-              mover: item.mover || 'sin asignar',
-              centralObservation: item.central_observation || item.centralObservation || '',
-              status: String(item.status || 'PENDIENTE').toUpperCase(),
-              timestamp: item.timestamp || '',
-              assignmentTime: item.assignment_time || item.assignmentTime || null,
-              movementTime: item.movement_time || item.movementTime || 'pendiente',
-              priority: (item.priority || 'media').trim().toLowerCase(),
-            }))
-            persistRequests(mappedRequests)
+    const res = await fetch('/api/sync')
+    if (res.ok) {
+      const json = await res.json()
+      if (json && json.success) {
+        let mappedRequests = null
+        if (Array.isArray(json.requests)) {
+          mappedRequests = json.requests.map(mapIncomingRequest)
+          
+          // Si el navegador tiene datos históricos en caché mayores a la BD, los sincroniza hacia PostgreSQL
+          const cached = readRequests()
+          if (cached.length > mappedRequests.length) {
+            mappedRequests = mergeRequests(cached, mappedRequests)
+            cached.forEach(req => saveApiRequest(req))
           }
-          if (Array.isArray(json.camilleros)) {
-            window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(json.camilleros))
-          }
-          return {
-            requests: mappedRequests,
-            camilleros: json.camilleros,
-          }
+
+          persistRequests(mappedRequests)
+        }
+        if (Array.isArray(json.camilleros) && json.camilleros.length > 0) {
+          window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(json.camilleros))
+        }
+        return {
+          requests: mappedRequests,
+          camilleros: json.camilleros,
         }
       }
-    } catch (_) {}
+    }
+  } catch (err) {
+    console.warn('Error sincronizando con API local PostgreSQL:', err.message)
   }
   return null
 }
 
 const saveApiRequest = async (request) => {
   try {
-    const sql = `
-      INSERT OR REPLACE INTO solicitudes_camilleros (
-        id, request_id, patient, record, service, location, destination,
-        transport, oxygen, observation, status, mover, central_observation,
-        timestamp, assignment_time, movement_time, priority
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-    `
-    const args = [
-      request.id, request.requestId || request.request_id, request.patient, request.record, request.service,
-      request.location, request.destination, request.transport, request.oxygen, request.observation || '',
-      request.status || 'PENDIENTE', request.mover || 'sin asignar', request.centralObservation || request.central_observation || '',
-      request.timestamp, request.assignmentTime || request.assignment_time || null, request.movementTime || request.movement_time || 'pendiente',
-      (request.priority || 'media').trim().toLowerCase()
-    ]
-    const updateSyncSql = `
-      INSERT OR REPLACE INTO app_sync_state (id, version, updated_at)
-      VALUES ('global', COALESCE((SELECT version FROM app_sync_state WHERE id = 'global'), 0) + 1, datetime('now'));
-    `
-    await directTursoExecute([
-      { sql, args },
-      { sql: updateSyncSql }
-    ])
-    localSyncVersion += 1
-    window.localStorage.setItem('turno_sync_version', String(localSyncVersion))
+    await fetch('/api/solicitudes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    })
   } catch (err) {
-    try {
-      await fetch('/api/solicitudes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request),
-      })
-    } catch (_) {}
+    console.warn('Error guardando en API local PostgreSQL:', err.message)
   }
 }
 
 const saveApiCamillero = async (name, action = 'POST') => {
   const cleanName = (name || '').toLowerCase().trim()
   if (!cleanName) return
-  const updateSyncSql = `
-    INSERT OR REPLACE INTO app_sync_state (id, version, updated_at)
-    VALUES ('global', COALESCE((SELECT version FROM app_sync_state WHERE id = 'global'), 0) + 1, datetime('now'));
-  `
   try {
-    if (action === 'DELETE') {
-      await directTursoExecute([
-        {
-          sql: 'DELETE FROM camilleros_personal WHERE LOWER(TRIM(name)) = ?;',
-          args: [cleanName]
-        },
-        { sql: updateSyncSql }
-      ])
-    } else {
-      await directTursoExecute([
-        {
-          sql: 'INSERT OR REPLACE INTO camilleros_personal (name, active) VALUES (?, 1);',
-          args: [cleanName]
-        },
-        { sql: updateSyncSql }
-      ])
-    }
-    localSyncVersion += 1
-    window.localStorage.setItem('turno_sync_version', String(localSyncVersion))
+    await fetch('/api/camilleros', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: cleanName, action }),
+    })
   } catch (err) {
-    try {
-      await fetch('/api/camilleros', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: cleanName, action }),
-      })
-    } catch (_) {}
+    console.warn('Error guardando camillero en API local PostgreSQL:', err.message)
   }
 }
 

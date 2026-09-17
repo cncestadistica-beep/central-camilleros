@@ -1,16 +1,22 @@
-﻿import { createClient } from '@libsql/client/web'
+import pkg from 'pg'
+const { Pool } = pkg
 
-let client = null
+let pool = null
 
-export function getTursoClient() {
-  const url = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL
-  const authToken = process.env.TURSO_AUTH_TOKEN
-  if (!url) return null
-  if (!client) {
-    client = createClient({
-      url: url.trim(),
-      authToken: authToken ? authToken.trim() : undefined,
+export function getPgPool() {
+  if (!pool) {
+    pool = new Pool({
+      host: process.env.DB_HOST || '172.21.21.37',
+      port: parseInt(process.env.DB_PORT || '5432', 10),
+      database: process.env.DB_NAME || 'bd_estadistica',
+      user: process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASSWORD || 'Teleco2018',
     })
   }
-  return client
+  return pool
+}
+
+export async function queryPg(text, params) {
+  const p = getPgPool()
+  return await p.query(text, params)
 }

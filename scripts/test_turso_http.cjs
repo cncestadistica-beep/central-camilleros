@@ -1,31 +1,13 @@
-﻿const https = require('https');
-require('dotenv').config();
+const sqlite3 = require('sqlite3').verbose();
+const db = new sqlite3.Database('camilleros.db');
 
-const url = (process.env.TURSO_DATABASE_URL || '').replace('libsql://', 'https://');
-const token = process.env.TURSO_AUTH_TOKEN;
-
-const payload = JSON.stringify({
-  requests: [
-    { type: 'execute', stmt: { sql: 'SELECT 1 as result;' } }
-  ]
-});
-
-const req = https.request(url + '/v2/pipeline', {
-  method: 'POST',
-  headers: {
-    'Authorization': 'Bearer ' + token,
-    'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(payload),
+db.all("SELECT name FROM sqlite_master WHERE type='table';", (err, tables) => {
+  console.log('Tablas en camilleros.db:', tables);
+  if (tables && tables.length > 0) {
+    tables.forEach(t => {
+      db.all(`SELECT count(*) as total FROM ${t.name}`, (e, res) => {
+        console.log(`Tabla ${t.name}:`, res);
+      });
+    });
   }
-}, (res) => {
-  let body = '';
-  res.on('data', chunk => body += chunk);
-  res.on('end', () => {
-    console.log('Status HTTP:', res.statusCode);
-    console.log('Respuesta Turso:', body);
-  });
 });
-
-req.on('error', err => console.error('Error:', err));
-req.write(payload);
-req.end();

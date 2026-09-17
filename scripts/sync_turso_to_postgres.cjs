@@ -1,4 +1,4 @@
-﻿const https = require('https');
+const https = require('https');
 const { Pool } = require('pg');
 require('dotenv').config();
 
@@ -60,24 +60,75 @@ function parseRows(result) {
 }
 
 async function sync() {
-  console.log('=== SINCRONIZANDO TURSO (SQLITE NUBE) ➔ POSTGRESQL LOCAL (172.21.21.37) ===');
+  console.log('=== SINCRONIZANDO TURSO / LOCAL ➔ POSTGRESQL SERVIDOR (172.21.21.37) ===');
   console.log('Fecha:', new Date().toLocaleString('es-CO'));
 
+  const client = await pgPool.connect();
+
   try {
-    const json = await executeTurso('SELECT * FROM solicitudes_camilleros ORDER BY created_at ASC;');
-    const rows = parseRows(json.results[0]?.response?.result);
-    console.log(`Leídas ${rows.length} solicitudes desde Turso Cloud.`);
+    // 1. Crear / verificar estructura en PostgreSQL
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS solicitudes_camilleros (
+        id VARCHAR(100) PRIMARY KEY,
+        request_id VARCHAR(50) NOT NULL,
+        patient VARCHAR(255) NOT NULL,
+        record VARCHAR(100) NOT NULL,
+        service VARCHAR(150) NOT NULL,
+        location VARCHAR(255) NOT NULL,
+        destination VARCHAR(255) NOT NULL,
+        transport VARCHAR(100) NOT NULL,
+        oxygen VARCHAR(10) NOT NULL DEFAULT 'no',
+        observation TEXT DEFAULT '',
+        status VARCHAR(50) NOT NULL DEFAULT 'PENDIENTE',
+        mover VARCHAR(150) DEFAULT 'sin asignar',
+        central_observation TEXT DEFAULT '',
+        timestamp VARCHAR(100) NOT NULL,
+        assignment_time VARCHAR(100) DEFAULT NULL,
+        movement_time VARCHAR(100) DEFAULT 'pendiente',
+        priority VARCHAR(50) DEFAULT 'media',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
-    const client = await pgPool.connect();
+    await client.query(`
+      ALTER TABLE solicitudes_camilleros ADD COLUMN IF NOT EXISTS priority VARCHAR(50) DEFAULT 'media';
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS camilleros_personal (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(150) UNIQUE NOT NULL,
+        active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_solicitudes_status ON solicitudes_camilleros(status);
+      CREATE INDEX IF NOT EXISTS idx_solicitudes_service ON solicitudes_camilleros(service);
+      CREATE INDEX IF NOT EXISTS idx_solicitudes_mover ON solicitudes_camilleros(mover);
+      CREATE INDEX IF NOT EXISTS idx_solicitudes_created_at ON solicitudes_camilleros(created_at);
+    `);
+    console.log('✓ Estructura de tablas e índices verificada en PostgreSQL.');
+
+    // 2. Extraer datos de Turso Cloud
+    let rows = [];
+    try {
+      const json = await executeTurso('SELECT * FROM solicitudes_camilleros ORDER BY created_at ASC;');
+      rows = parseRows(json.results[0]?.response?.result);
+      console.log(`Leídas ${rows.length} solicitudes desde Turso Cloud.`);
+    } catch (e) {
+      console.warn('Advertencia al consultar Turso Cloud:', e.message);
+    }
+
     let count = 0;
-
     for (const s of rows) {
       const query = `
         INSERT INTO solicitudes_camilleros (
           id, request_id, patient, record, service, location, destination,
           transport, oxygen, observation, status, mover, central_observation,
-          timestamp, assignment_time, movement_time, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+          timestamp, assignment_time, movement_time, priority, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
         ON CONFLICT (id) DO UPDATE SET
           request_id = EXCLUDED.request_id,
           patient = EXCLUDED.patient,
@@ -93,25 +144,62 @@ async function sync() {
           central_observation = EXCLUDED.central_observation,
           timestamp = EXCLUDED.timestamp,
           assignment_time = EXCLUDED.assignment_time,
-          movement_time = EXCLUDED.movement_time;
+          movement_time = EXCLUDED.movement_time,
+          priority = EXCLUDED.priority;
       `;
       const values = [
-        s.id, s.request_id, s.patient, s.record, s.service,
-        s.location, s.destination, s.transport, s.oxygen, s.observation || '',
+        s.id, s.request_id || s.requestId, s.patient, s.record, s.service,
+        s.location, s.destination, s.transport, s.oxygen || 'no', s.observation || '',
         s.status || 'PENDIENTE', s.mover || 'sin asignar', s.central_observation || '',
         s.timestamp, s.assignment_time || null, s.movement_time || 'pendiente',
+        (s.priority || 'media').toLowerCase().trim(),
         s.created_at || new Date()
       ];
       await client.query(query, values);
       count++;
     }
+    console.log(`✓ ${count} solicitudes sincronizadas en PostgreSQL.`);
 
-    console.log(`✓ ${count} registros sincronizados en tu servidor PostgreSQL (172.21.21.37) exitosamente.`);
-    client.release();
-    await pgPool.end();
+    // 3. Sincronizar Camilleros
+    let camRows = [];
+    try {
+      const camJson = await executeTurso('SELECT name FROM camilleros_personal WHERE active = 1;');
+      camRows = parseRows(camJson.results[0]?.response?.result);
+    } catch (_) {}
+
+    const defaultCamilleros = [
+      'victor perafán',
+      'andrés castro',
+      'juan lucas',
+      'michi jose',
+      'albajadmamad',
+      'maria gonzales'
+    ];
+    const camillerosList = camRows.length > 0 ? camRows.map(r => r.name) : defaultCamilleros;
+
+    let camCount = 0;
+    for (const name of camillerosList) {
+      if (!name) continue;
+      await client.query(`
+        INSERT INTO camilleros_personal (name, active)
+        VALUES ($1, true)
+        ON CONFLICT (name) DO UPDATE SET active = true;
+      `, [name.toLowerCase().trim()]);
+      camCount++;
+    }
+    console.log(`✓ ${camCount} camilleros configurados en PostgreSQL.`);
+
+    const countSol = await client.query('SELECT count(*) FROM solicitudes_camilleros;');
+    const countCam = await client.query('SELECT count(*) FROM camilleros_personal WHERE active = true;');
+    console.log('\n=== RECUENTO FINAL EN POSTGRESQL (172.21.21.37) ===');
+    console.log('Total Solicitudes en PostgreSQL:', countSol.rows[0].count);
+    console.log('Total Camilleros en PostgreSQL:', countCam.rows[0].count);
     console.log('=== PROCESO COMPLETADO EXITOSAMENTE ===');
   } catch (err) {
     console.error('Error sincronizando:', err.message);
+  } finally {
+    client.release();
+    await pgPool.end();
   }
 }
 
