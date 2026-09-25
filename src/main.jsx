@@ -206,31 +206,23 @@ const formatDuration = (mins) => {
   return m === 0 ? `${h} h` : `${h} h ${m} min`
 }
 
-const PARSE_SERVER_URL = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? 'http://localhost:1337/parse'
-  : (import.meta.env?.VITE_PARSE_SERVER_URL || 'http://172.21.21.37:1337/parse')
+const PARSE_SERVER_URL = (() => {
+  if (typeof window === 'undefined') return 'http://localhost:1337/parse'
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return 'http://localhost:1337/parse'
+  }
+  if (import.meta.env?.VITE_PARSE_SERVER_URL) {
+    return import.meta.env.VITE_PARSE_SERVER_URL
+  }
+  return 'http://172.21.21.37:1337/parse'
+})()
+
 const PARSE_APP_ID = 'central-camilleros'
 const PARSE_JS_KEY = 'JsKeyCNC2026'
-
-const canUseParse = typeof window !== 'undefined' && (
-  window.location.protocol === 'http:' ||
-  PARSE_SERVER_URL.startsWith('https:') ||
-  window.location.hostname === 'localhost' ||
-  window.location.hostname === '127.0.0.1'
-)
 
 const parseHeaders = {
   'X-Parse-Application-Id': PARSE_APP_ID,
   'X-Parse-JavaScript-Key': PARSE_JS_KEY,
-  'Content-Type': 'application/json'
-}
-
-const SUPABASE_URL = 'https://vgkpnhtctbdmnnxnmlyi.supabase.co'
-const SUPABASE_ANON_KEY = 'sb_publishable_ok8owhU5nQrHW7qS6sk5kg_GlB-INgB'
-
-const supabaseHeaders = {
-  'apikey': SUPABASE_ANON_KEY,
-  'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
   'Content-Type': 'application/json'
 }
 
@@ -269,29 +261,6 @@ const mergeRequests = (cachedList = [], incomingList = []) => {
   })
 }
 
-const fetchAllSupabaseRequests = async () => {
-  let all = []
-  let page = 0
-  const pageSize = 1000
-  while (true) {
-    const from = page * pageSize
-    const to = from + pageSize - 1
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=*&order=created_at.desc`, {
-      headers: {
-        ...supabaseHeaders,
-        'Range': `${from}-${to}`
-      }
-    })
-    if (!res.ok) break
-    const items = await res.json()
-    if (!Array.isArray(items) || items.length === 0) break
-    all = all.concat(items)
-    if (items.length < pageSize) break
-    page++
-  }
-  return all
-}
-
 const fetchAllParseRequests = async () => {
   let all = []
   let skip = 0
@@ -322,108 +291,48 @@ const fetchApiSync = async (force = false) => {
     const shouldFetchAll = force || cached.length === 0
     const shouldFetchCamilleros = force || (Date.now() - lastCamillerosFetchTime > 10 * 60 * 1000) || readCamilleros().length === 0
 
-    // 1. Si canUseParse es true, intentar con Parse Server primero
-    if (canUseParse) {
-      try {
-        const promises = [
-          shouldFetchAll
-            ? fetchAllParseRequests()
-            : fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?order=-updatedAt,-createdAt&limit=30`, { headers: parseHeaders })
-                .then(r => r.ok ? r.json().then(j => j.results || []) : [])
-                .catch(() => [])
-        ]
-
-        if (shouldFetchCamilleros) {
-          promises.push(
-            fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal?order=name`, { headers: parseHeaders })
-              .then(r => {
-                if (r.ok) {
-                  lastCamillerosFetchTime = Date.now()
-                  return r.json().then(j => (j.results || []).filter(c => c.active !== false).map(c => c.name))
-                }
-                return null
-              })
-              .catch(() => null)
-          )
-        } else {
-          promises.push(Promise.resolve(null))
-        }
-
-        const [resParseReq, resParseCam] = await Promise.all(promises)
-
-        if (Array.isArray(resParseReq) && resParseReq.length > 0) {
-          let mappedRequests = resParseReq.map(mapIncomingRequest)
-          if (!shouldFetchAll && cached.length > 0) {
-            mappedRequests = mergeRequests(cached, mappedRequests)
-          }
-          persistRequests(mappedRequests)
-          if (Array.isArray(resParseCam) && resParseCam.length > 0) {
-            window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(resParseCam))
-          }
-          return {
-            requests: mappedRequests,
-            camilleros: (Array.isArray(resParseCam) && resParseCam.length > 0) ? resParseCam : readCamilleros(),
-          }
-        }
-      } catch (_) {}
-    }
-
-    // 2. Fallback a Supabase (Directo, seguro y sin bloqueos de Mixed Content)
-    const promisesSupabase = [
+    const promises = [
       shouldFetchAll
-        ? fetchAllSupabaseRequests()
-        : fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=id,request_id,patient,record,service,location,destination,transport,oxygen,observation,status,mover,central_observation,timestamp,assignment_time,movement_time,priority&order=created_at.desc`, {
-            headers: { ...supabaseHeaders, 'Range': '0-29' }
-          }).then(r => r.ok ? r.json() : []).catch(() => [])
+        ? fetchAllParseRequests()
+        : fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?order=-updatedAt,-createdAt&limit=30`, { headers: parseHeaders })
+            .then(r => r.ok ? r.json().then(j => j.results || []) : [])
+            .catch(() => [])
     ]
 
     if (shouldFetchCamilleros) {
-      promisesSupabase.push(
-        fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal?select=name&active=eq.true&order=name.asc`, {
-          headers: supabaseHeaders
-        }).then(async r => {
-          if (r.ok) {
-            lastCamillerosFetchTime = Date.now()
-            const data = await r.json()
-            return data.map(item => item.name)
-          }
-          return null
-        }).catch(() => null)
+      promises.push(
+        fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal?order=name`, { headers: parseHeaders })
+          .then(r => {
+            if (r.ok) {
+              lastCamillerosFetchTime = Date.now()
+              return r.json().then(j => (j.results || []).filter(c => c.active !== false).map(c => c.name))
+            }
+            return null
+          })
+          .catch(() => null)
       )
     } else {
-      promisesSupabase.push(Promise.resolve(null))
+      promises.push(Promise.resolve(null))
     }
 
-    const [rawRequests, rawCamilleros] = await Promise.all(promisesSupabase)
+    const [resParseReq, resParseCam] = await Promise.all(promises)
 
-    if (Array.isArray(rawRequests) && rawRequests.length > 0) {
-      let mappedRequests = rawRequests.map(mapIncomingRequest)
-      
+    if (Array.isArray(resParseReq) && resParseReq.length > 0) {
+      let mappedRequests = resParseReq.map(mapIncomingRequest)
       if (!shouldFetchAll && cached.length > 0) {
         mappedRequests = mergeRequests(cached, mappedRequests)
       }
-
       persistRequests(mappedRequests)
-      if (Array.isArray(rawCamilleros) && rawCamilleros.length > 0) {
-        window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(rawCamilleros))
+      if (Array.isArray(resParseCam) && resParseCam.length > 0) {
+        window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(resParseCam))
       }
       return {
         requests: mappedRequests,
-        camilleros: (Array.isArray(rawCamilleros) && rawCamilleros.length > 0) ? rawCamilleros : readCamilleros(),
+        camilleros: (Array.isArray(resParseCam) && resParseCam.length > 0) ? resParseCam : readCamilleros(),
       }
     }
   } catch (err) {
-    try {
-      const res = await fetch('/api/sync')
-      if (res.ok) {
-        const json = await res.json()
-        if (json && json.success) {
-          let mappedRequests = (json.requests || []).map(mapIncomingRequest)
-          persistRequests(mappedRequests)
-          return { requests: mappedRequests, camilleros: json.camilleros }
-        }
-      }
-    } catch (_) {}
+    console.error('Error sincronizando con Parse Server:', err)
   } finally {
     isSyncing = false
   }
@@ -431,26 +340,6 @@ const fetchApiSync = async (force = false) => {
 }
 
 const saveApiRequest = async (request) => {
-  const supabasePayload = {
-    id: String(request.id),
-    request_id: request.requestId || request.request_id || '',
-    patient: request.patient || '',
-    record: request.record ? String(request.record) : '',
-    service: request.service || '',
-    location: request.location || '',
-    destination: request.destination || '',
-    transport: request.transport || '',
-    oxygen: request.oxygen || 'no',
-    observation: request.observation || '',
-    status: request.status || 'PENDIENTE',
-    mover: request.mover || 'sin asignar',
-    central_observation: request.centralObservation || request.central_observation || '',
-    timestamp: request.timestamp || '',
-    assignment_time: request.assignmentTime || request.assignment_time || null,
-    movement_time: request.movementTime || request.movement_time || 'pendiente',
-    priority: (request.priority || 'media').trim().toLowerCase()
-  }
-
   const parsePayload = {
     customId: String(request.id),
     requestId: request.requestId || request.request_id || '',
@@ -471,104 +360,60 @@ const saveApiRequest = async (request) => {
     priority: (request.priority || 'media').trim().toLowerCase()
   }
 
-  // 1. Guardar en Supabase (siempre disponible 24/7 en la nube con formato exacto snake_case)
-  const saveSupabase = fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros`, {
-    method: 'POST',
-    headers: {
-      ...supabaseHeaders,
-      'Prefer': 'resolution=merge-duplicates'
-    },
-    body: JSON.stringify(supabasePayload)
-  }).catch(() => {})
-
-  // 2. Guardar en Parse Server (si está en red local / intranet disponible)
-  let saveParse = Promise.resolve()
-  if (canUseParse) {
-    saveParse = (async () => {
-      try {
-        const findRes = await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?where=${encodeURIComponent(JSON.stringify({ customId: String(request.id) }))}`, {
-          headers: parseHeaders
+  try {
+    const findRes = await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?where=${encodeURIComponent(JSON.stringify({ customId: String(request.id) }))}`, {
+      headers: parseHeaders
+    })
+    if (findRes.ok) {
+      const findJson = await findRes.json()
+      if (findJson.results && findJson.results.length > 0) {
+        const objId = findJson.results[0].objectId
+        await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero/${objId}`, {
+          method: 'PUT',
+          headers: parseHeaders,
+          body: JSON.stringify(parsePayload)
         })
-        if (findRes.ok) {
-          const findJson = await findRes.json()
-          if (findJson.results && findJson.results.length > 0) {
-            const objId = findJson.results[0].objectId
-            await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero/${objId}`, {
-              method: 'PUT',
-              headers: parseHeaders,
-              body: JSON.stringify(parsePayload)
-            })
-          } else {
-            await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero`, {
-              method: 'POST',
-              headers: parseHeaders,
-              body: JSON.stringify(parsePayload)
-            })
-          }
-        }
-      } catch (_) {}
-    })()
+      } else {
+        await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero`, {
+          method: 'POST',
+          headers: parseHeaders,
+          body: JSON.stringify(parsePayload)
+        })
+      }
+    }
+  } catch (err) {
+    console.error('Error guardando en Parse Server:', err)
   }
-
-  await Promise.allSettled([saveSupabase, saveParse])
 }
 
 const saveApiCamillero = async (name, action = 'POST') => {
   const cleanName = (name || '').toLowerCase().trim()
   if (!cleanName) return
 
-  // Supabase
-  const saveSupabase = (async () => {
-    try {
-      if (action === 'DELETE') {
-        await fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal?name=eq.${encodeURIComponent(cleanName)}`, {
-          method: 'PATCH',
-          headers: supabaseHeaders,
-          body: JSON.stringify({ active: false })
+  try {
+    const findRes = await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal?where=${encodeURIComponent(JSON.stringify({ name: cleanName }))}`, {
+      headers: parseHeaders
+    })
+    if (findRes.ok) {
+      const findJson = await findRes.json()
+      if (findJson.results && findJson.results.length > 0) {
+        const objId = findJson.results[0].objectId
+        await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal/${objId}`, {
+          method: 'PUT',
+          headers: parseHeaders,
+          body: JSON.stringify({ active: action !== 'DELETE' })
         })
-      } else {
-        await fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal`, {
+      } else if (action !== 'DELETE') {
+        await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal`, {
           method: 'POST',
-          headers: {
-            ...supabaseHeaders,
-            'Prefer': 'resolution=merge-duplicates'
-          },
+          headers: parseHeaders,
           body: JSON.stringify({ name: cleanName, active: true })
         })
       }
-    } catch (_) {}
-  })()
-
-  // Parse Server
-  let saveParse = Promise.resolve()
-  if (canUseParse) {
-    saveParse = (async () => {
-      try {
-        const findRes = await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal?where=${encodeURIComponent(JSON.stringify({ name: cleanName }))}`, {
-          headers: parseHeaders
-        })
-        if (findRes.ok) {
-          const findJson = await findRes.json()
-          if (findJson.results && findJson.results.length > 0) {
-            const objId = findJson.results[0].objectId
-            await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal/${objId}`, {
-              method: 'PUT',
-              headers: parseHeaders,
-              body: JSON.stringify({ active: action !== 'DELETE' })
-            })
-          } else if (action !== 'DELETE') {
-            await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal`, {
-              method: 'POST',
-              headers: parseHeaders,
-              body: JSON.stringify({ name: cleanName, active: true })
-            })
-          }
-        }
-      } catch (_) {}
-    })()
+    }
+  } catch (err) {
+    console.error('Error guardando camillero en Parse Server:', err)
   }
-
-  await Promise.allSettled([saveSupabase, saveParse])
 }
 
 function App() {
