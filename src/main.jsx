@@ -220,9 +220,25 @@ const PARSE_SERVER_URL = (() => {
 const PARSE_APP_ID = 'central-camilleros'
 const PARSE_JS_KEY = 'JsKeyCNC2026'
 
+const canReachParse = typeof window !== 'undefined' && (
+  window.location.protocol === 'http:' ||
+  PARSE_SERVER_URL.startsWith('https:') ||
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1'
+)
+
 const parseHeaders = {
   'X-Parse-Application-Id': PARSE_APP_ID,
   'X-Parse-JavaScript-Key': PARSE_JS_KEY,
+  'Content-Type': 'application/json'
+}
+
+const SUPABASE_URL = 'https://vgkpnhtctbdmnnxnmlyi.supabase.co'
+const SUPABASE_ANON_KEY = 'sb_publishable_ok8owhU5nQrHW7qS6sk5kg_GlB-INgB'
+
+const supabaseHeaders = {
+  'apikey': SUPABASE_ANON_KEY,
+  'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
   'Content-Type': 'application/json'
 }
 
@@ -280,6 +296,29 @@ const fetchAllParseRequests = async () => {
   return all
 }
 
+const fetchAllSupabaseRequests = async () => {
+  let all = []
+  let page = 0
+  const pageSize = 1000
+  while (true) {
+    const from = page * pageSize
+    const to = from + pageSize - 1
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=id,request_id,patient,record,service,location,destination,transport,oxygen,observation,status,mover,central_observation,timestamp,assignment_time,movement_time,priority&order=created_at.desc`, {
+      headers: {
+        ...supabaseHeaders,
+        'Range': `${from}-${to}`
+      }
+    })
+    if (!res.ok) break
+    const items = await res.json()
+    if (!Array.isArray(items) || items.length === 0) break
+    all = all.concat(items)
+    if (items.length < pageSize) break
+    page++
+  }
+  return all
+}
+
 let lastCamillerosFetchTime = 0
 let isSyncing = false
 
@@ -291,48 +330,98 @@ const fetchApiSync = async (force = false) => {
     const shouldFetchAll = force || cached.length === 0
     const shouldFetchCamilleros = force || (Date.now() - lastCamillerosFetchTime > 10 * 60 * 1000) || readCamilleros().length === 0
 
-    const promises = [
+    // 1. Si está en local/intranet y soporta Parse Server, intentar primero
+    if (canReachParse) {
+      try {
+        const promises = [
+          shouldFetchAll
+            ? fetchAllParseRequests()
+            : fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?order=-updatedAt,-createdAt&limit=30`, { headers: parseHeaders })
+                .then(r => r.ok ? r.json().then(j => j.results || []) : [])
+                .catch(() => [])
+        ]
+
+        if (shouldFetchCamilleros) {
+          promises.push(
+            fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal?order=name`, { headers: parseHeaders })
+              .then(r => {
+                if (r.ok) {
+                  lastCamillerosFetchTime = Date.now()
+                  return r.json().then(j => (j.results || []).filter(c => c.active !== false).map(c => c.name))
+                }
+                return null
+              })
+              .catch(() => null)
+          )
+        } else {
+          promises.push(Promise.resolve(null))
+        }
+
+        const [resParseReq, resParseCam] = await Promise.all(promises)
+
+        if (Array.isArray(resParseReq) && resParseReq.length > 0) {
+          let mappedRequests = resParseReq.map(mapIncomingRequest)
+          if (!shouldFetchAll && cached.length > 0) {
+            mappedRequests = mergeRequests(cached, mappedRequests)
+          }
+          persistRequests(mappedRequests)
+          if (Array.isArray(resParseCam) && resParseCam.length > 0) {
+            window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(resParseCam))
+          }
+          return {
+            requests: mappedRequests,
+            camilleros: (Array.isArray(resParseCam) && resParseCam.length > 0) ? resParseCam : readCamilleros(),
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 2. Nube Supabase (Funciona perfecto en celulares 4G/5G, tablets y web pública HTTPS)
+    const promisesSupabase = [
       shouldFetchAll
-        ? fetchAllParseRequests()
-        : fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?order=-updatedAt,-createdAt&limit=30`, { headers: parseHeaders })
-            .then(r => r.ok ? r.json().then(j => j.results || []) : [])
-            .catch(() => [])
+        ? fetchAllSupabaseRequests()
+        : fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=id,request_id,patient,record,service,location,destination,transport,oxygen,observation,status,mover,central_observation,timestamp,assignment_time,movement_time,priority&order=created_at.desc`, {
+            headers: { ...supabaseHeaders, 'Range': '0-29' }
+          }).then(r => r.ok ? r.json() : []).catch(() => [])
     ]
 
     if (shouldFetchCamilleros) {
-      promises.push(
-        fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal?order=name`, { headers: parseHeaders })
-          .then(r => {
-            if (r.ok) {
-              lastCamillerosFetchTime = Date.now()
-              return r.json().then(j => (j.results || []).filter(c => c.active !== false).map(c => c.name))
-            }
-            return null
-          })
-          .catch(() => null)
+      promisesSupabase.push(
+        fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal?select=name&active=eq.true&order=name.asc`, {
+          headers: supabaseHeaders
+        }).then(async r => {
+          if (r.ok) {
+            lastCamillerosFetchTime = Date.now()
+            const data = await r.json()
+            return data.map(item => item.name)
+          }
+          return null
+        }).catch(() => null)
       )
     } else {
-      promises.push(Promise.resolve(null))
+      promisesSupabase.push(Promise.resolve(null))
     }
 
-    const [resParseReq, resParseCam] = await Promise.all(promises)
+    const [rawRequests, rawCamilleros] = await Promise.all(promisesSupabase)
 
-    if (Array.isArray(resParseReq) && resParseReq.length > 0) {
-      let mappedRequests = resParseReq.map(mapIncomingRequest)
+    if (Array.isArray(rawRequests) && rawRequests.length > 0) {
+      let mappedRequests = rawRequests.map(mapIncomingRequest)
+      
       if (!shouldFetchAll && cached.length > 0) {
         mappedRequests = mergeRequests(cached, mappedRequests)
       }
+
       persistRequests(mappedRequests)
-      if (Array.isArray(resParseCam) && resParseCam.length > 0) {
-        window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(resParseCam))
+      if (Array.isArray(rawCamilleros) && rawCamilleros.length > 0) {
+        window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(rawCamilleros))
       }
       return {
         requests: mappedRequests,
-        camilleros: (Array.isArray(resParseCam) && resParseCam.length > 0) ? resParseCam : readCamilleros(),
+        camilleros: (Array.isArray(rawCamilleros) && rawCamilleros.length > 0) ? rawCamilleros : readCamilleros(),
       }
     }
   } catch (err) {
-    console.error('Error sincronizando con Parse Server:', err)
+    console.error('Error sincronizando:', err)
   } finally {
     isSyncing = false
   }
@@ -340,6 +429,26 @@ const fetchApiSync = async (force = false) => {
 }
 
 const saveApiRequest = async (request) => {
+  const supabasePayload = {
+    id: String(request.id),
+    request_id: request.requestId || request.request_id || '',
+    patient: request.patient || '',
+    record: request.record ? String(request.record) : '',
+    service: request.service || '',
+    location: request.location || '',
+    destination: request.destination || '',
+    transport: request.transport || '',
+    oxygen: request.oxygen || 'no',
+    observation: request.observation || '',
+    status: request.status || 'PENDIENTE',
+    mover: request.mover || 'sin asignar',
+    central_observation: request.centralObservation || request.central_observation || '',
+    timestamp: request.timestamp || '',
+    assignment_time: request.assignmentTime || request.assignment_time || null,
+    movement_time: request.movementTime || request.movement_time || 'pendiente',
+    priority: (request.priority || 'media').trim().toLowerCase()
+  }
+
   const parsePayload = {
     customId: String(request.id),
     requestId: request.requestId || request.request_id || '',
@@ -360,60 +469,104 @@ const saveApiRequest = async (request) => {
     priority: (request.priority || 'media').trim().toLowerCase()
   }
 
-  try {
-    const findRes = await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?where=${encodeURIComponent(JSON.stringify({ customId: String(request.id) }))}`, {
-      headers: parseHeaders
-    })
-    if (findRes.ok) {
-      const findJson = await findRes.json()
-      if (findJson.results && findJson.results.length > 0) {
-        const objId = findJson.results[0].objectId
-        await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero/${objId}`, {
-          method: 'PUT',
-          headers: parseHeaders,
-          body: JSON.stringify(parsePayload)
+  // 1. Guardar en Supabase (siempre disponible para celulares y web)
+  const saveSupabase = fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros`, {
+    method: 'POST',
+    headers: {
+      ...supabaseHeaders,
+      'Prefer': 'resolution=merge-duplicates'
+    },
+    body: JSON.stringify(supabasePayload)
+  }).catch(() => {})
+
+  // 2. Guardar en Parse Server (si está accesible en intranet)
+  let saveParse = Promise.resolve()
+  if (canReachParse) {
+    saveParse = (async () => {
+      try {
+        const findRes = await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?where=${encodeURIComponent(JSON.stringify({ customId: String(request.id) }))}`, {
+          headers: parseHeaders
         })
-      } else {
-        await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero`, {
-          method: 'POST',
-          headers: parseHeaders,
-          body: JSON.stringify(parsePayload)
-        })
-      }
-    }
-  } catch (err) {
-    console.error('Error guardando en Parse Server:', err)
+        if (findRes.ok) {
+          const findJson = await findRes.json()
+          if (findJson.results && findJson.results.length > 0) {
+            const objId = findJson.results[0].objectId
+            await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero/${objId}`, {
+              method: 'PUT',
+              headers: parseHeaders,
+              body: JSON.stringify(parsePayload)
+            })
+          } else {
+            await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero`, {
+              method: 'POST',
+              headers: parseHeaders,
+              body: JSON.stringify(parsePayload)
+            })
+          }
+        }
+      } catch (_) {}
+    })()
   }
+
+  await Promise.allSettled([saveSupabase, saveParse])
 }
 
 const saveApiCamillero = async (name, action = 'POST') => {
   const cleanName = (name || '').toLowerCase().trim()
   if (!cleanName) return
 
-  try {
-    const findRes = await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal?where=${encodeURIComponent(JSON.stringify({ name: cleanName }))}`, {
-      headers: parseHeaders
-    })
-    if (findRes.ok) {
-      const findJson = await findRes.json()
-      if (findJson.results && findJson.results.length > 0) {
-        const objId = findJson.results[0].objectId
-        await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal/${objId}`, {
-          method: 'PUT',
-          headers: parseHeaders,
-          body: JSON.stringify({ active: action !== 'DELETE' })
+  // Supabase
+  const saveSupabase = (async () => {
+    try {
+      if (action === 'DELETE') {
+        await fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal?name=eq.${encodeURIComponent(cleanName)}`, {
+          method: 'PATCH',
+          headers: supabaseHeaders,
+          body: JSON.stringify({ active: false })
         })
-      } else if (action !== 'DELETE') {
-        await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal`, {
+      } else {
+        await fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal`, {
           method: 'POST',
-          headers: parseHeaders,
+          headers: {
+            ...supabaseHeaders,
+            'Prefer': 'resolution=merge-duplicates'
+          },
           body: JSON.stringify({ name: cleanName, active: true })
         })
       }
-    }
-  } catch (err) {
-    console.error('Error guardando camillero en Parse Server:', err)
+    } catch (_) {}
+  })()
+
+  // Parse Server
+  let saveParse = Promise.resolve()
+  if (canReachParse) {
+    saveParse = (async () => {
+      try {
+        const findRes = await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal?where=${encodeURIComponent(JSON.stringify({ name: cleanName }))}`, {
+          headers: parseHeaders
+        })
+        if (findRes.ok) {
+          const findJson = await findRes.json()
+          if (findJson.results && findJson.results.length > 0) {
+            const objId = findJson.results[0].objectId
+            await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal/${objId}`, {
+              method: 'PUT',
+              headers: parseHeaders,
+              body: JSON.stringify({ active: action !== 'DELETE' })
+            })
+          } else if (action !== 'DELETE') {
+            await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal`, {
+              method: 'POST',
+              headers: parseHeaders,
+              body: JSON.stringify({ name: cleanName, active: true })
+            })
+          }
+        }
+      } catch (_) {}
+    })()
   }
+
+  await Promise.allSettled([saveSupabase, saveParse])
 }
 
 function App() {
@@ -443,46 +596,50 @@ function App() {
       }
     }
 
-    // Carga inicial: Si ya hay datos en caché local, solo sincroniza los últimos cambios para ahorrar ancho de banda
+    // Carga inicial: Si ya hay datos en caché local, solo sincroniza los últimos cambios
     const existingCached = readRequests()
     doSync(existingCached.length === 0)
 
     let lastInteractionSync = Date.now()
 
-    // Polling inteligente optimizado (cada 8s cuando la pestaña está activa)
+    // Polling inteligente adaptativo (cada 6s cuando la pestaña está activa)
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && !document.hidden) {
         lastInteractionSync = Date.now()
         doSync(false)
       }
-    }, 8000)
+    }, 6000)
+
+    const triggerQuickSync = () => {
+      if (Date.now() - lastInteractionSync > 2000) {
+        lastInteractionSync = Date.now()
+        doSync(false)
+      }
+    }
 
     const onPopState = () => {
       setRequests(readRequests())
       setCamilleros(readCamilleros())
       setPage(getPageFromPath())
     }
-    const onVisibilityChange = () => {
-      if (typeof document !== 'undefined' && !document.hidden && Date.now() - lastInteractionSync > 10000) {
-        lastInteractionSync = Date.now()
-        doSync(false)
-      }
-    }
-    const onFocus = () => {
-      if (typeof document !== 'undefined' && !document.hidden && Date.now() - lastInteractionSync > 10000) {
-        lastInteractionSync = Date.now()
-        doSync(false)
-      }
-    }
+
     window.addEventListener('popstate', onPopState)
-    window.addEventListener('focus', onFocus)
-    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('focus', triggerQuickSync)
+    window.addEventListener('online', triggerQuickSync)
+    window.addEventListener('pageshow', triggerQuickSync)
+    document.addEventListener('visibilitychange', () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        triggerQuickSync()
+      }
+    })
+
     return () => {
       mounted = false
       clearInterval(interval)
       window.removeEventListener('popstate', onPopState)
-      window.removeEventListener('focus', onFocus)
-      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('focus', triggerQuickSync)
+      window.removeEventListener('online', triggerQuickSync)
+      window.removeEventListener('pageshow', triggerQuickSync)
     }
   }, [])
 
