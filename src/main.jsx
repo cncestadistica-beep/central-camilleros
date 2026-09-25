@@ -304,23 +304,44 @@ const fetchAllParseRequests = async () => {
   return all
 }
 
+let lastCamillerosFetchTime = 0
+let isSyncing = false
+
 const fetchApiSync = async (force = false) => {
+  if (isSyncing) return null
+  isSyncing = true
   try {
     const cached = readRequests()
     const shouldFetchAll = force || cached.length === 0
+    const shouldFetchCamilleros = force || (Date.now() - lastCamillerosFetchTime > 10 * 60 * 1000) || readCamilleros().length === 0
 
     // 1. Intentar sincronización con Parse Server primero
     try {
-      const [resParseReq, resParseCam] = await Promise.all([
+      const promises = [
         shouldFetchAll
           ? fetchAllParseRequests()
-          : fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?order=-createdAt&limit=200`, { headers: parseHeaders })
+          : fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?order=-updatedAt,-createdAt&limit=30`, { headers: parseHeaders })
               .then(r => r.ok ? r.json().then(j => j.results || []) : [])
-              .catch(() => []),
-        fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal?order=name`, { headers: parseHeaders })
-          .then(r => r.ok ? r.json().then(j => (j.results || []).filter(c => c.active !== false).map(c => c.name)) : [])
-          .catch(() => [])
-      ])
+              .catch(() => [])
+      ]
+
+      if (shouldFetchCamilleros) {
+        promises.push(
+          fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal?order=name`, { headers: parseHeaders })
+            .then(r => {
+              if (r.ok) {
+                lastCamillerosFetchTime = Date.now()
+                return r.json().then(j => (j.results || []).filter(c => c.active !== false).map(c => c.name))
+              }
+              return null
+            })
+            .catch(() => null)
+        )
+      } else {
+        promises.push(Promise.resolve(null))
+      }
+
+      const [resParseReq, resParseCam] = await Promise.all(promises)
 
       if (Array.isArray(resParseReq) && resParseReq.length > 0) {
         let mappedRequests = resParseReq.map(mapIncomingRequest)
@@ -333,24 +354,38 @@ const fetchApiSync = async (force = false) => {
         }
         return {
           requests: mappedRequests,
-          camilleros: resParseCam.length > 0 ? resParseCam : readCamilleros(),
+          camilleros: (Array.isArray(resParseCam) && resParseCam.length > 0) ? resParseCam : readCamilleros(),
         }
       }
     } catch (_) {}
 
     // 2. Fallback a Supabase
-    const [rawRequests, resCam] = await Promise.all([
+    const promisesSupabase = [
       shouldFetchAll
         ? fetchAllSupabaseRequests()
-        : fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=*&order=created_at.desc`, {
-            headers: { ...supabaseHeaders, 'Range': '0-199' }
-          }).then(r => r.ok ? r.json() : []).catch(() => []),
-      fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal?select=name&active=eq.true&order=name.asc`, {
-        headers: supabaseHeaders
-      })
-    ])
+        : fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=id,request_id,patient,record,service,location,destination,transport,oxygen,observation,status,mover,central_observation,timestamp,assignment_time,movement_time,priority&order=created_at.desc`, {
+            headers: { ...supabaseHeaders, 'Range': '0-29' }
+          }).then(r => r.ok ? r.json() : []).catch(() => [])
+    ]
 
-    const rawCamilleros = resCam.ok ? (await resCam.json()).map(r => r.name) : []
+    if (shouldFetchCamilleros) {
+      promisesSupabase.push(
+        fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal?select=name&active=eq.true&order=name.asc`, {
+          headers: supabaseHeaders
+        }).then(async r => {
+          if (r.ok) {
+            lastCamillerosFetchTime = Date.now()
+            const data = await r.json()
+            return data.map(item => item.name)
+          }
+          return null
+        }).catch(() => null)
+      )
+    } else {
+      promisesSupabase.push(Promise.resolve(null))
+    }
+
+    const [rawRequests, rawCamilleros] = await Promise.all(promisesSupabase)
 
     if (Array.isArray(rawRequests) && rawRequests.length > 0) {
       let mappedRequests = rawRequests.map(mapIncomingRequest)
@@ -365,7 +400,7 @@ const fetchApiSync = async (force = false) => {
       }
       return {
         requests: mappedRequests,
-        camilleros: rawCamilleros.length > 0 ? rawCamilleros : readCamilleros(),
+        camilleros: (Array.isArray(rawCamilleros) && rawCamilleros.length > 0) ? rawCamilleros : readCamilleros(),
       }
     }
   } catch (err) {
@@ -380,6 +415,8 @@ const fetchApiSync = async (force = false) => {
         }
       }
     } catch (_) {}
+  } finally {
+    isSyncing = false
   }
   return null
 }
@@ -524,15 +561,19 @@ function App() {
       }
     }
 
-    // Carga inicial completa
-    doSync(true)
+    // Carga inicial: Si ya hay datos en caché local, solo sincroniza los últimos cambios para ahorrar ancho de banda
+    const existingCached = readRequests()
+    doSync(existingCached.length === 0)
 
-    // Polling inteligente optimizado (cada 6s cuando la pestaña está activa)
+    let lastInteractionSync = Date.now()
+
+    // Polling inteligente optimizado (cada 8s cuando la pestaña está activa)
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && !document.hidden) {
+        lastInteractionSync = Date.now()
         doSync(false)
       }
-    }, 6000)
+    }, 8000)
 
     const onPopState = () => {
       setRequests(readRequests())
@@ -540,12 +581,14 @@ function App() {
       setPage(getPageFromPath())
     }
     const onVisibilityChange = () => {
-      if (typeof document !== 'undefined' && !document.hidden) {
+      if (typeof document !== 'undefined' && !document.hidden && Date.now() - lastInteractionSync > 10000) {
+        lastInteractionSync = Date.now()
         doSync(false)
       }
     }
     const onFocus = () => {
-      if (typeof document !== 'undefined' && !document.hidden) {
+      if (typeof document !== 'undefined' && !document.hidden && Date.now() - lastInteractionSync > 10000) {
+        lastInteractionSync = Date.now()
         doSync(false)
       }
     }
@@ -581,7 +624,7 @@ function App() {
     }
   }, [])
 
-  const handleRefresh = async (force = true) => {
+  const handleRefresh = async (force = false) => {
     const data = await fetchApiSync(force)
     if (data) {
       if (data.requests) setRequests(data.requests)
