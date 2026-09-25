@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import * as XLSX from 'xlsx'
 import './styles.css'
 
+
 const services = [
   'urgencias adultos',
   'hospitalización 1er piso',
@@ -264,13 +265,42 @@ const mapIncomingRequest = (item, idx) => ({
 
 const mergeRequests = (cachedList = [], incomingList = []) => {
   const map = new Map()
+  
+  // 1. Put cached items in map
   for (const item of cachedList) {
-    if (item && item.id) map.set(item.id, item)
+    if (item && item.id) map.set(String(item.id), item)
   }
+  
+  // 2. Overwrite with incoming authoritative items from database
   for (const item of incomingList) {
-    if (item && item.id) map.set(item.id, item)
+    if (item && item.id) map.set(String(item.id), item)
   }
-  return Array.from(map.values()).sort((a, b) => {
+
+  const incomingPendingIds = new Set(
+    incomingList.filter(r => String(r.status || '').toUpperCase() === 'PENDIENTE').map(r => String(r.id))
+  )
+  const incomingAllIds = new Set(incomingList.map(r => String(r.id)))
+
+  const result = []
+  for (const item of map.values()) {
+    if (String(item.status || '').toUpperCase() === 'PENDIENTE') {
+      // If server returned records and this item is on server as non-pending -> update status
+      if (incomingList.length > 0 && incomingAllIds.has(String(item.id)) && !incomingPendingIds.has(String(item.id))) {
+        continue
+      }
+      // If it's a stale pending request from a previous day that is not in the active server list
+      if (incomingList.length > 0 && !incomingPendingIds.has(String(item.id))) {
+        const itemDate = parseCODate(item.timestamp)
+        const isToday = itemDate && itemDate.toDateString() === new Date().toDateString()
+        if (!isToday) {
+          item.status = 'REALIZADO'
+        }
+      }
+    }
+    result.push(item)
+  }
+
+  return result.sort((a, b) => {
     const da = parseCODate(a.timestamp) || new Date(0)
     const db = parseCODate(b.timestamp) || new Date(0)
     return db.getTime() - da.getTime()
@@ -330,59 +360,19 @@ const fetchApiSync = async (force = false) => {
     const shouldFetchAll = force || cached.length === 0
     const shouldFetchCamilleros = force || (Date.now() - lastCamillerosFetchTime > 10 * 60 * 1000) || readCamilleros().length === 0
 
-    // 1. Si está en local/intranet y soporta Parse Server, intentar primero
-    if (canReachParse) {
-      try {
-        const promises = [
-          shouldFetchAll
-            ? fetchAllParseRequests()
-            : fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?order=-updatedAt,-createdAt&limit=30`, { headers: parseHeaders })
-                .then(r => r.ok ? r.json().then(j => j.results || []) : [])
-                .catch(() => [])
-        ]
-
-        if (shouldFetchCamilleros) {
-          promises.push(
-            fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal?order=name`, { headers: parseHeaders })
-              .then(r => {
-                if (r.ok) {
-                  lastCamillerosFetchTime = Date.now()
-                  return r.json().then(j => (j.results || []).filter(c => c.active !== false).map(c => c.name))
-                }
-                return null
-              })
-              .catch(() => null)
-          )
-        } else {
-          promises.push(Promise.resolve(null))
-        }
-
-        const [resParseReq, resParseCam] = await Promise.all(promises)
-
-        if (Array.isArray(resParseReq) && resParseReq.length > 0) {
-          let mappedRequests = resParseReq.map(mapIncomingRequest)
-          if (!shouldFetchAll && cached.length > 0) {
-            mappedRequests = mergeRequests(cached, mappedRequests)
-          }
-          persistRequests(mappedRequests)
-          if (Array.isArray(resParseCam) && resParseCam.length > 0) {
-            window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(resParseCam))
-          }
-          return {
-            requests: mappedRequests,
-            camilleros: (Array.isArray(resParseCam) && resParseCam.length > 0) ? resParseCam : readCamilleros(),
-          }
-        }
-      } catch (_) {}
-    }
-
-    // 2. Nube Supabase (Funciona perfecto en celulares 4G/5G, tablets y web pública HTTPS)
+    // Consultar todos los pendientes activos + los últimos 30 registros
     const promisesSupabase = [
       shouldFetchAll
         ? fetchAllSupabaseRequests()
-        : fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=id,request_id,patient,record,service,location,destination,transport,oxygen,observation,status,mover,central_observation,timestamp,assignment_time,movement_time,priority&order=created_at.desc`, {
-            headers: { ...supabaseHeaders, 'Range': '0-29' }
-          }).then(r => r.ok ? r.json() : []).catch(() => [])
+        : Promise.all([
+            fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?status=eq.PENDIENTE&select=id,request_id,patient,record,service,location,destination,transport,oxygen,observation,status,mover,central_observation,timestamp,assignment_time,movement_time,priority&order=created_at.desc`, { headers: supabaseHeaders }).then(r => r.ok ? r.json() : []).catch(() => []),
+            fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=id,request_id,patient,record,service,location,destination,transport,oxygen,observation,status,mover,central_observation,timestamp,assignment_time,movement_time,priority&order=created_at.desc`, { headers: { ...supabaseHeaders, 'Range': '0-29' } }).then(r => r.ok ? r.json() : []).catch(() => [])
+          ]).then(([pendings, recents]) => {
+            const combinedMap = new Map()
+            for (const item of (pendings || [])) if (item && item.id) combinedMap.set(String(item.id), item)
+            for (const item of (recents || [])) if (item && item.id) combinedMap.set(String(item.id), item)
+            return Array.from(combinedMap.values())
+          }).catch(() => [])
     ]
 
     if (shouldFetchCamilleros) {
@@ -402,15 +392,27 @@ const fetchApiSync = async (force = false) => {
       promisesSupabase.push(Promise.resolve(null))
     }
 
-    const [rawRequests, rawCamilleros] = await Promise.all(promisesSupabase)
+    // Si está en intranet, sincronizar también con Parse Server en paralelo
+    if (canReachParse) {
+      promisesSupabase.push(
+        fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?where=${encodeURIComponent(JSON.stringify({ status: 'PENDIENTE' }))}`, { headers: parseHeaders })
+          .then(r => r.ok ? r.json().then(j => j.results || []) : [])
+          .catch(() => [])
+      )
+    }
 
-    if (Array.isArray(rawRequests) && rawRequests.length > 0) {
-      let mappedRequests = rawRequests.map(mapIncomingRequest)
-      
+    const [rawRequests, rawCamilleros, parsePendings] = await Promise.all(promisesSupabase)
+
+    let allIncoming = Array.isArray(rawRequests) ? [...rawRequests] : []
+    if (Array.isArray(parsePendings) && parsePendings.length > 0) {
+      allIncoming = [...allIncoming, ...parsePendings]
+    }
+
+    if (allIncoming.length > 0) {
+      let mappedRequests = allIncoming.map(mapIncomingRequest)
       if (!shouldFetchAll && cached.length > 0) {
         mappedRequests = mergeRequests(cached, mappedRequests)
       }
-
       persistRequests(mappedRequests)
       if (Array.isArray(rawCamilleros) && rawCamilleros.length > 0) {
         window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(rawCamilleros))
