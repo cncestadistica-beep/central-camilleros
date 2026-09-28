@@ -330,10 +330,10 @@ const fetchApiSync = async (force = false) => {
     if (shouldFetchAll) {
       queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;' })
     } else {
-      // 1. Solo traslados pendientes (~2-5 filas) usando índice idx_solicitudes_status
+      // 1. Solo traslados pendientes (~1-3 filas) usando índice idx_solicitudes_status
       queries.push({ sql: "SELECT * FROM solicitudes_camilleros WHERE status = 'PENDIENTE' ORDER BY created_at DESC;" })
-      // 2. Últimos 10 registros para delta sync (más que suficiente para cambios recientes)
-      queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC LIMIT 10;' })
+      // 2. Últimos 5 registros para delta sync
+      queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC LIMIT 5;' })
     }
 
     if (shouldFetchCamilleros) {
@@ -478,13 +478,13 @@ function App() {
 
     let lastInteractionSync = Date.now()
 
-    // Polling inteligente adaptativo (cada 8s cuando la pestaña está visible y activa)
+    // Polling inteligente adaptativo (cada 10s cuando la pestaña está visible y activa)
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && !document.hidden) {
         lastInteractionSync = Date.now()
         doSync(false)
       }
-    }, 8000)
+    }, 10000)
 
     const triggerQuickSync = () => {
       if (Date.now() - lastInteractionSync > 2500) {
