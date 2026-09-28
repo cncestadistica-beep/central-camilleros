@@ -539,7 +539,12 @@ function App() {
     }
   }, [])
 
+  let lastManualRefreshTime = 0
   const handleRefresh = async (force = false) => {
+    if (Date.now() - lastManualRefreshTime < 2500) {
+      return
+    }
+    lastManualRefreshTime = Date.now()
     const data = await fetchApiSync(force)
     if (data) {
       if (data.requests) setRequests(data.requests)
@@ -836,7 +841,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
 
   const triggerRefresh = () => {
     setRefreshState('refreshing')
-    if (onRefresh) onRefresh(true)
+    if (onRefresh) onRefresh(false)
     setTimeout(() => {
       setRefreshState('success')
       setTimeout(() => setRefreshState('idle'), 1000)
