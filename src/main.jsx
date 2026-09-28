@@ -330,10 +330,10 @@ const fetchApiSync = async (force = false) => {
     if (shouldFetchAll) {
       queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;' })
     } else {
-      // 1. Solo traslados pendientes (~3-5 filas)
+      // 1. Solo traslados pendientes (~2-5 filas) usando índice idx_solicitudes_status
       queries.push({ sql: "SELECT * FROM solicitudes_camilleros WHERE status = 'PENDIENTE' ORDER BY created_at DESC;" })
-      // 2. Últimos 25 registros para delta sync
-      queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC LIMIT 25;' })
+      // 2. Últimos 10 registros para delta sync (más que suficiente para cambios recientes)
+      queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC LIMIT 10;' })
     }
 
     if (shouldFetchCamilleros) {
@@ -478,16 +478,16 @@ function App() {
 
     let lastInteractionSync = Date.now()
 
-    // Polling inteligente adaptativo (cada 6s cuando la pestaña está activa)
+    // Polling inteligente adaptativo (cada 8s cuando la pestaña está visible y activa)
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && !document.hidden) {
         lastInteractionSync = Date.now()
         doSync(false)
       }
-    }, 6000)
+    }, 8000)
 
     const triggerQuickSync = () => {
-      if (Date.now() - lastInteractionSync > 2000) {
+      if (Date.now() - lastInteractionSync > 2500) {
         lastInteractionSync = Date.now()
         doSync(false)
       }
@@ -602,8 +602,6 @@ function App() {
     persistRequests(nextRequests)
     if (updatedItem) {
       saveApiRequest(updatedItem)
-    } else {
-      nextRequests.forEach(req => saveApiRequest(req))
     }
   }
 
