@@ -215,6 +215,9 @@ const PARSE_SERVER_URL = (() => {
   if (import.meta.env?.VITE_PARSE_SERVER_URL) {
     return import.meta.env.VITE_PARSE_SERVER_URL
   }
+  if (window.location.hostname.startsWith('172.21.') || window.location.hostname.startsWith('192.168.') || window.location.port === '1337') {
+    return `${window.location.protocol}//${window.location.hostname}:1337/parse`
+  }
   return 'http://172.21.21.37:1337/parse'
 })()
 
@@ -225,7 +228,10 @@ const canReachParse = typeof window !== 'undefined' && (
   window.location.protocol === 'http:' ||
   PARSE_SERVER_URL.startsWith('https:') ||
   window.location.hostname === 'localhost' ||
-  window.location.hostname === '127.0.0.1'
+  window.location.hostname === '127.0.0.1' ||
+  window.location.hostname.startsWith('172.21.') ||
+  window.location.hostname.startsWith('192.168.') ||
+  window.location.port === '1337'
 )
 
 const parseHeaders = {
