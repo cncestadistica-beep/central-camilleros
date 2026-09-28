@@ -272,7 +272,7 @@ const mapIncomingRequest = (item, idx) => ({
   priority: (item.priority || 'media').trim().toLowerCase(),
 })
 
-const mergeRequests = (cachedList = [], incomingList = []) => {
+const mergeRequests = (cachedList = [], incomingList = [], authoritativePendingIds = null) => {
   const map = new Map()
   
   // 1. Put cached items in map
@@ -285,28 +285,19 @@ const mergeRequests = (cachedList = [], incomingList = []) => {
     if (item && item.id) map.set(String(item.id), item)
   }
 
-  const incomingPendingIds = new Set(
-    incomingList.filter(r => String(r.status || '').toUpperCase() === 'PENDIENTE').map(r => String(r.id))
-  )
-  const incomingAllIds = new Set(incomingList.map(r => String(r.id)))
-
-  const result = []
-  for (const item of map.values()) {
-    if (String(item.status || '').toUpperCase() === 'PENDIENTE') {
-      if (incomingList.length > 0 && incomingAllIds.has(String(item.id)) && !incomingPendingIds.has(String(item.id))) {
-        continue
-      }
-      if (incomingList.length > 0 && !incomingPendingIds.has(String(item.id))) {
-        const itemDate = parseCODate(item.timestamp)
-        const isToday = itemDate && itemDate.toDateString() === new Date().toDateString()
-        if (!isToday) {
+  // 3. If we received the authoritative pending list from Turso, reconcile all items
+  if (authoritativePendingIds instanceof Set) {
+    for (const [id, item] of map.entries()) {
+      if (String(item.status || '').toUpperCase() === 'PENDIENTE') {
+        if (!authoritativePendingIds.has(String(id))) {
+          // Ya no está pendiente en la base de datos central de Turso
           item.status = 'REALIZADO'
         }
       }
     }
-    result.push(item)
   }
 
+  const result = Array.from(map.values())
   return result.sort((a, b) => {
     const da = parseCODate(a.timestamp) || new Date(0)
     const db = parseCODate(b.timestamp) || new Date(0)
@@ -330,10 +321,10 @@ const fetchApiSync = async (force = false) => {
     if (shouldFetchAll) {
       queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;' })
     } else {
-      // 1. Solo traslados pendientes (~1-3 filas) usando índice idx_solicitudes_status
+      // 1. Todos los traslados pendientes de la institución
       queries.push({ sql: "SELECT * FROM solicitudes_camilleros WHERE status = 'PENDIENTE' ORDER BY created_at DESC;" })
-      // 2. Últimos 5 registros para delta sync
-      queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC LIMIT 5;' })
+      // 2. Últimos 25 registros para tener camilleros y observaciones actualizadas
+      queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC LIMIT 25;' })
     }
 
     if (shouldFetchCamilleros) {
@@ -345,6 +336,7 @@ const fetchApiSync = async (force = false) => {
 
     let rawRequests = []
     let rawCamilleros = null
+    let pendingIdsSet = null
 
     if (shouldFetchAll) {
       const res0 = tursoRes.results[0]?.response?.result
@@ -355,11 +347,13 @@ const fetchApiSync = async (force = false) => {
         lastCamillerosFetchTime = Date.now()
       }
     } else {
-      const pendings = parseTursoResult(tursoRes.results[0]?.response?.result)
-      const recents = parseTursoResult(tursoRes.results[1]?.response?.result)
+      const pendings = parseTursoResult(tursoRes.results[0]?.response?.result) || []
+      const recents = parseTursoResult(tursoRes.results[1]?.response?.result) || []
+      pendingIdsSet = new Set(pendings.map(r => String(r.id)))
+
       const combinedMap = new Map()
-      for (const item of (pendings || [])) if (item && item.id) combinedMap.set(String(item.id), item)
-      for (const item of (recents || [])) if (item && item.id) combinedMap.set(String(item.id), item)
+      for (const item of pendings) if (item && item.id) combinedMap.set(String(item.id), item)
+      for (const item of recents) if (item && item.id) combinedMap.set(String(item.id), item)
       rawRequests = Array.from(combinedMap.values())
 
       if (shouldFetchCamilleros) {
@@ -369,10 +363,10 @@ const fetchApiSync = async (force = false) => {
       }
     }
 
-    if (rawRequests.length > 0 || shouldFetchAll) {
+    if (rawRequests.length > 0 || shouldFetchAll || (pendingIdsSet && pendingIdsSet.size === 0)) {
       let mappedRequests = rawRequests.map(mapIncomingRequest)
       if (!shouldFetchAll && cached.length > 0) {
-        mappedRequests = mergeRequests(cached, mappedRequests)
+        mappedRequests = mergeRequests(cached, mappedRequests, pendingIdsSet)
       }
       persistRequests(mappedRequests)
       if (Array.isArray(rawCamilleros) && rawCamilleros.length > 0) {
