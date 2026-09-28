@@ -207,51 +207,54 @@ const formatDuration = (mins) => {
   return m === 0 ? `${h} h` : `${h} h ${m} min`
 }
 
-const PARSE_SERVER_URL = (() => {
-  if (typeof window === 'undefined') return 'http://localhost:1337/parse'
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    return 'http://localhost:1337/parse'
-  }
-  if (import.meta.env?.VITE_PARSE_SERVER_URL) {
-    return import.meta.env.VITE_PARSE_SERVER_URL
-  }
-  if (window.location.hostname.startsWith('172.21.') || window.location.hostname.startsWith('192.168.') || window.location.port === '1337') {
-    return `${window.location.protocol}//${window.location.hostname}:1337/parse`
-  }
-  return 'http://172.21.21.37:1337/parse'
-})()
+const TURSO_URL = 'https://camilleros-cncestadistica-beep.aws-us-east-2.turso.io/v2/pipeline'
+const TURSO_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MjIxMzU1MDksImlhdCI6MTc5MDU5OTUwOSwiaWQiOiIwMWEwZTgwYi1lYzAxLTdiMzktOGIyMC02ZTQxYWI2OTE2NGEiLCJraWQiOiJ6a2tLcGc0SDNYSFFMeE40NXI4RDNkN3RoYUlsS1BXeG42N2l0SWpxVmtFIiwicmlkIjoiZWVkZDlhZWEtNjJiOS00NmY0LWI5MDQtMzkwY2FlZmJiMTM3In0.mLLZIsgXe3HGeD3cpLmqWju2zIIsAgksxOqG5-wM_396-Cyt8bKPWI8nOx3G9sUE_S6E09KBu-ADlgdNxBEeCw'
 
-const PARSE_APP_ID = 'central-camilleros'
-const PARSE_JS_KEY = 'JsKeyCNC2026'
+async function directTursoExecute(statements) {
+  const payload = JSON.stringify({
+    requests: statements.map(s => {
+      if (typeof s === 'string') return { type: 'execute', stmt: { sql: s } }
+      return {
+        type: 'execute',
+        stmt: {
+          sql: s.sql,
+          args: (s.args || []).map(val => {
+            if (val === null || val === undefined) return { type: 'null' }
+            if (typeof val === 'number') return { type: 'integer', value: String(val) }
+            return { type: 'text', value: String(val) }
+          })
+        }
+      }
+    })
+  })
 
-const canReachParse = typeof window !== 'undefined' && (
-  window.location.protocol === 'http:' ||
-  PARSE_SERVER_URL.startsWith('https:') ||
-  window.location.hostname === 'localhost' ||
-  window.location.hostname === '127.0.0.1' ||
-  window.location.hostname.startsWith('172.21.') ||
-  window.location.hostname.startsWith('192.168.') ||
-  window.location.port === '1337'
-)
-
-const parseHeaders = {
-  'X-Parse-Application-Id': PARSE_APP_ID,
-  'X-Parse-JavaScript-Key': PARSE_JS_KEY,
-  'Content-Type': 'application/json'
+  const res = await fetch(TURSO_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${TURSO_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: payload
+  })
+  if (!res.ok) throw new Error(`Turso HTTP ${res.status}`)
+  return await res.json()
 }
 
-const SUPABASE_URL = 'https://vgkpnhtctbdmnnxnmlyi.supabase.co'
-const SUPABASE_ANON_KEY = 'sb_publishable_ok8owhU5nQrHW7qS6sk5kg_GlB-INgB'
-
-const supabaseHeaders = {
-  'apikey': SUPABASE_ANON_KEY,
-  'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-  'Content-Type': 'application/json'
+function parseTursoResult(result) {
+  if (!result || !result.cols || !result.rows) return []
+  const cols = result.cols.map(c => c.name)
+  return result.rows.map(row => {
+    const obj = {}
+    cols.forEach((col, idx) => {
+      obj[col] = row[idx] ? row[idx].value : null
+    })
+    return obj
+  })
 }
 
 const mapIncomingRequest = (item, idx) => ({
-  id: item.customId || item.id || `req-${idx}`,
-  requestId: item.requestId || item.request_id || `TR-${1001 + idx}`,
+  id: item.id || `req-${idx}`,
+  requestId: item.request_id || item.requestId || `TR-${1001 + idx}`,
   patient: formatPatientName(item.patient || ''),
   record: item.record ? String(item.record) : '',
   location: item.location || '',
@@ -261,11 +264,11 @@ const mapIncomingRequest = (item, idx) => ({
   oxygen: item.oxygen || '',
   observation: item.observation || '',
   mover: item.mover || 'sin asignar',
-  centralObservation: item.centralObservation || item.central_observation || '',
+  centralObservation: item.central_observation || item.centralObservation || '',
   status: String(item.status || 'PENDIENTE').toUpperCase(),
   timestamp: item.timestamp || '',
-  assignmentTime: item.assignmentTime || item.assignment_time || null,
-  movementTime: item.movementTime || item.movement_time || 'pendiente',
+  assignmentTime: item.assignment_time || item.assignmentTime || null,
+  movementTime: item.movement_time || item.movementTime || 'pendiente',
   priority: (item.priority || 'media').trim().toLowerCase(),
 })
 
@@ -290,11 +293,9 @@ const mergeRequests = (cachedList = [], incomingList = []) => {
   const result = []
   for (const item of map.values()) {
     if (String(item.status || '').toUpperCase() === 'PENDIENTE') {
-      // If server returned records and this item is on server as non-pending -> update status
       if (incomingList.length > 0 && incomingAllIds.has(String(item.id)) && !incomingPendingIds.has(String(item.id))) {
         continue
       }
-      // If it's a stale pending request from a previous day that is not in the active server list
       if (incomingList.length > 0 && !incomingPendingIds.has(String(item.id))) {
         const itemDate = parseCODate(item.timestamp)
         const isToday = itemDate && itemDate.toDateString() === new Date().toDateString()
@@ -313,48 +314,6 @@ const mergeRequests = (cachedList = [], incomingList = []) => {
   })
 }
 
-const fetchAllParseRequests = async () => {
-  let all = []
-  let skip = 0
-  const limit = 1000
-  while (true) {
-    const res = await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?order=-createdAt&limit=${limit}&skip=${skip}`, {
-      headers: parseHeaders
-    })
-    if (!res.ok) break
-    const json = await res.json()
-    const items = json.results || []
-    if (!Array.isArray(items) || items.length === 0) break
-    all = all.concat(items)
-    if (items.length < limit) break
-    skip += limit
-  }
-  return all
-}
-
-const fetchAllSupabaseRequests = async () => {
-  let all = []
-  let page = 0
-  const pageSize = 1000
-  while (true) {
-    const from = page * pageSize
-    const to = from + pageSize - 1
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=id,request_id,patient,record,service,location,destination,transport,oxygen,observation,status,mover,central_observation,timestamp,assignment_time,movement_time,priority&order=created_at.desc`, {
-      headers: {
-        ...supabaseHeaders,
-        'Range': `${from}-${to}`
-      }
-    })
-    if (!res.ok) break
-    const items = await res.json()
-    if (!Array.isArray(items) || items.length === 0) break
-    all = all.concat(items)
-    if (items.length < pageSize) break
-    page++
-  }
-  return all
-}
-
 let lastCamillerosFetchTime = 0
 let isSyncing = false
 
@@ -366,56 +325,52 @@ const fetchApiSync = async (force = false) => {
     const shouldFetchAll = force || cached.length === 0
     const shouldFetchCamilleros = force || (Date.now() - lastCamillerosFetchTime > 10 * 60 * 1000) || readCamilleros().length === 0
 
-    // Consultar todos los pendientes activos + los últimos 30 registros
-    const promisesSupabase = [
-      shouldFetchAll
-        ? fetchAllSupabaseRequests()
-        : Promise.all([
-            fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?status=eq.PENDIENTE&select=id,request_id,patient,record,service,location,destination,transport,oxygen,observation,status,mover,central_observation,timestamp,assignment_time,movement_time,priority&order=created_at.desc`, { headers: supabaseHeaders }).then(r => r.ok ? r.json() : []).catch(() => []),
-            fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros?select=id,request_id,patient,record,service,location,destination,transport,oxygen,observation,status,mover,central_observation,timestamp,assignment_time,movement_time,priority&order=created_at.desc`, { headers: { ...supabaseHeaders, 'Range': '0-29' } }).then(r => r.ok ? r.json() : []).catch(() => [])
-          ]).then(([pendings, recents]) => {
-            const combinedMap = new Map()
-            for (const item of (pendings || [])) if (item && item.id) combinedMap.set(String(item.id), item)
-            for (const item of (recents || [])) if (item && item.id) combinedMap.set(String(item.id), item)
-            return Array.from(combinedMap.values())
-          }).catch(() => [])
-    ]
+    const queries = []
+
+    if (shouldFetchAll) {
+      queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;' })
+    } else {
+      // 1. Solo traslados pendientes (~3-5 filas)
+      queries.push({ sql: "SELECT * FROM solicitudes_camilleros WHERE status = 'PENDIENTE' ORDER BY created_at DESC;" })
+      // 2. Últimos 25 registros para delta sync
+      queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC LIMIT 25;' })
+    }
 
     if (shouldFetchCamilleros) {
-      promisesSupabase.push(
-        fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal?select=name&active=eq.true&order=name.asc`, {
-          headers: supabaseHeaders
-        }).then(async r => {
-          if (r.ok) {
-            lastCamillerosFetchTime = Date.now()
-            const data = await r.json()
-            return data.map(item => item.name)
-          }
-          return null
-        }).catch(() => null)
-      )
+      queries.push({ sql: 'SELECT name FROM camilleros_personal WHERE active = 1 ORDER BY name ASC;' })
+    }
+
+    const tursoRes = await directTursoExecute(queries)
+    if (!tursoRes || !tursoRes.results) return null
+
+    let rawRequests = []
+    let rawCamilleros = null
+
+    if (shouldFetchAll) {
+      const res0 = tursoRes.results[0]?.response?.result
+      rawRequests = parseTursoResult(res0)
+      if (shouldFetchCamilleros) {
+        const res1 = tursoRes.results[1]?.response?.result
+        rawCamilleros = parseTursoResult(res1).map(r => r.name)
+        lastCamillerosFetchTime = Date.now()
+      }
     } else {
-      promisesSupabase.push(Promise.resolve(null))
+      const pendings = parseTursoResult(tursoRes.results[0]?.response?.result)
+      const recents = parseTursoResult(tursoRes.results[1]?.response?.result)
+      const combinedMap = new Map()
+      for (const item of (pendings || [])) if (item && item.id) combinedMap.set(String(item.id), item)
+      for (const item of (recents || [])) if (item && item.id) combinedMap.set(String(item.id), item)
+      rawRequests = Array.from(combinedMap.values())
+
+      if (shouldFetchCamilleros) {
+        const res2 = tursoRes.results[2]?.response?.result
+        rawCamilleros = parseTursoResult(res2).map(r => r.name)
+        lastCamillerosFetchTime = Date.now()
+      }
     }
 
-    // Si está en intranet, sincronizar también con Parse Server en paralelo
-    if (canReachParse) {
-      promisesSupabase.push(
-        fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?where=${encodeURIComponent(JSON.stringify({ status: 'PENDIENTE' }))}`, { headers: parseHeaders })
-          .then(r => r.ok ? r.json().then(j => j.results || []) : [])
-          .catch(() => [])
-      )
-    }
-
-    const [rawRequests, rawCamilleros, parsePendings] = await Promise.all(promisesSupabase)
-
-    let allIncoming = Array.isArray(rawRequests) ? [...rawRequests] : []
-    if (Array.isArray(parsePendings) && parsePendings.length > 0) {
-      allIncoming = [...allIncoming, ...parsePendings]
-    }
-
-    if (allIncoming.length > 0) {
-      let mappedRequests = allIncoming.map(mapIncomingRequest)
+    if (rawRequests.length > 0 || shouldFetchAll) {
+      let mappedRequests = rawRequests.map(mapIncomingRequest)
       if (!shouldFetchAll && cached.length > 0) {
         mappedRequests = mergeRequests(cached, mappedRequests)
       }
@@ -429,7 +384,7 @@ const fetchApiSync = async (force = false) => {
       }
     }
   } catch (err) {
-    console.error('Error sincronizando:', err)
+    console.error('Error sincronizando con Turso Cloud:', err)
   } finally {
     isSyncing = false
   }
@@ -437,144 +392,57 @@ const fetchApiSync = async (force = false) => {
 }
 
 const saveApiRequest = async (request) => {
-  const supabasePayload = {
-    id: String(request.id),
-    request_id: request.requestId || request.request_id || '',
-    patient: request.patient || '',
-    record: request.record ? String(request.record) : '',
-    service: request.service || '',
-    location: request.location || '',
-    destination: request.destination || '',
-    transport: request.transport || '',
-    oxygen: request.oxygen || 'no',
-    observation: request.observation || '',
-    status: request.status || 'PENDIENTE',
-    mover: request.mover || 'sin asignar',
-    central_observation: request.centralObservation || request.central_observation || '',
-    timestamp: request.timestamp || '',
-    assignment_time: request.assignmentTime || request.assignment_time || null,
-    movement_time: request.movementTime || request.movement_time || 'pendiente',
-    priority: (request.priority || 'media').trim().toLowerCase()
+  try {
+    const sql = `
+      INSERT OR REPLACE INTO solicitudes_camilleros (
+        id, request_id, patient, record, service, location, destination,
+        transport, oxygen, observation, status, mover, central_observation,
+        timestamp, assignment_time, movement_time, priority
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `
+    const args = [
+      String(request.id),
+      request.requestId || request.request_id || '',
+      request.patient || '',
+      request.record ? String(request.record) : '',
+      request.service || '',
+      request.location || '',
+      request.destination || '',
+      request.transport || 'silla de ruedas',
+      request.oxygen || 'no',
+      request.observation || '',
+      (request.status || 'PENDIENTE').toUpperCase(),
+      (request.mover || 'sin asignar').toLowerCase().trim(),
+      request.centralObservation || request.central_observation || '',
+      request.timestamp || '',
+      request.assignmentTime || request.assignment_time || null,
+      request.movementTime || request.movement_time || 'pendiente',
+      (request.priority || 'media').trim().toLowerCase()
+    ]
+    await directTursoExecute([{ sql, args }])
+  } catch (err) {
+    console.error('Error guardando en Turso Cloud:', err)
   }
-
-  const parsePayload = {
-    customId: String(request.id),
-    requestId: request.requestId || request.request_id || '',
-    patient: request.patient || '',
-    record: request.record ? String(request.record) : '',
-    service: request.service || '',
-    location: request.location || '',
-    destination: request.destination || '',
-    transport: request.transport || '',
-    oxygen: request.oxygen || 'no',
-    observation: request.observation || '',
-    status: request.status || 'PENDIENTE',
-    mover: request.mover || 'sin asignar',
-    centralObservation: request.centralObservation || request.central_observation || '',
-    timestamp: request.timestamp || '',
-    assignmentTime: request.assignmentTime || request.assignment_time || null,
-    movementTime: request.movementTime || request.movement_time || 'pendiente',
-    priority: (request.priority || 'media').trim().toLowerCase()
-  }
-
-  // 1. Guardar en Supabase (siempre disponible para celulares y web)
-  const saveSupabase = fetch(`${SUPABASE_URL}/rest/v1/solicitudes_camilleros`, {
-    method: 'POST',
-    headers: {
-      ...supabaseHeaders,
-      'Prefer': 'resolution=merge-duplicates'
-    },
-    body: JSON.stringify(supabasePayload)
-  }).catch(() => {})
-
-  // 2. Guardar en Parse Server (si está accesible en intranet)
-  let saveParse = Promise.resolve()
-  if (canReachParse) {
-    saveParse = (async () => {
-      try {
-        const findRes = await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero?where=${encodeURIComponent(JSON.stringify({ customId: String(request.id) }))}`, {
-          headers: parseHeaders
-        })
-        if (findRes.ok) {
-          const findJson = await findRes.json()
-          if (findJson.results && findJson.results.length > 0) {
-            const objId = findJson.results[0].objectId
-            await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero/${objId}`, {
-              method: 'PUT',
-              headers: parseHeaders,
-              body: JSON.stringify(parsePayload)
-            })
-          } else {
-            await fetch(`${PARSE_SERVER_URL}/classes/SolicitudCamillero`, {
-              method: 'POST',
-              headers: parseHeaders,
-              body: JSON.stringify(parsePayload)
-            })
-          }
-        }
-      } catch (_) {}
-    })()
-  }
-
-  await Promise.allSettled([saveSupabase, saveParse])
 }
 
 const saveApiCamillero = async (name, action = 'POST') => {
   const cleanName = (name || '').toLowerCase().trim()
   if (!cleanName) return
-
-  // Supabase
-  const saveSupabase = (async () => {
-    try {
-      if (action === 'DELETE') {
-        await fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal?name=eq.${encodeURIComponent(cleanName)}`, {
-          method: 'PATCH',
-          headers: supabaseHeaders,
-          body: JSON.stringify({ active: false })
-        })
-      } else {
-        await fetch(`${SUPABASE_URL}/rest/v1/camilleros_personal`, {
-          method: 'POST',
-          headers: {
-            ...supabaseHeaders,
-            'Prefer': 'resolution=merge-duplicates'
-          },
-          body: JSON.stringify({ name: cleanName, active: true })
-        })
-      }
-    } catch (_) {}
-  })()
-
-  // Parse Server
-  let saveParse = Promise.resolve()
-  if (canReachParse) {
-    saveParse = (async () => {
-      try {
-        const findRes = await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal?where=${encodeURIComponent(JSON.stringify({ name: cleanName }))}`, {
-          headers: parseHeaders
-        })
-        if (findRes.ok) {
-          const findJson = await findRes.json()
-          if (findJson.results && findJson.results.length > 0) {
-            const objId = findJson.results[0].objectId
-            await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal/${objId}`, {
-              method: 'PUT',
-              headers: parseHeaders,
-              body: JSON.stringify({ active: action !== 'DELETE' })
-            })
-          } else if (action !== 'DELETE') {
-            await fetch(`${PARSE_SERVER_URL}/classes/CamilleroPersonal`, {
-              method: 'POST',
-              headers: parseHeaders,
-              body: JSON.stringify({ name: cleanName, active: true })
-            })
-          }
-        }
-      } catch (_) {}
-    })()
+  try {
+    if (action === 'DELETE') {
+      await directTursoExecute([{
+        sql: 'UPDATE camilleros_personal SET active = 0 WHERE LOWER(TRIM(name)) = ?;',
+        args: [cleanName]
+      }])
+    } else {
+      await directTursoExecute([{
+        sql: 'INSERT OR REPLACE INTO camilleros_personal (name, active) VALUES (?, 1);',
+        args: [cleanName]
+      }])
+    }
+  } catch (err) {
+    console.error('Error guardando camillero en Turso Cloud:', err)
   }
-
-  await Promise.allSettled([saveSupabase, saveParse])
 }
 
 function App() {

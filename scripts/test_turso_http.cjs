@@ -1,31 +1,25 @@
-const { Client } = require('pg');
+const fs = require('fs');
+const readline = require('readline');
 
-const client = new Client({
-  host: 'aws-0-us-east-2.pooler.supabase.com',
-  port: 6543,
-  database: 'postgres',
-  user: 'postgres.vgkpnhtctbdmnnxnmlyi',
-  password: 'nza0p2WbAJSNCPvs',
-  ssl: { rejectUnauthorized: false }
+const transcriptPath = 'C:/Users/CNESTAD003/.gemini/antigravity/brain/a6cbeb6a-04ff-43cd-8dda-86acdd749c4e/.system_generated/logs/transcript_full.jsonl';
+
+console.log('Reading transcript_full.jsonl...');
+const rl = readline.createInterface({
+  input: fs.createReadStream(transcriptPath),
+  crlfDelay: Infinity
 });
 
-async function grantPermissions() {
-  console.log('Granting permissions to anon and authenticated in Supabase...');
-  await client.connect();
+let allFound = new Map();
 
-  await client.query(`
-    GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-    
-    GRANT ALL ON TABLE public.solicitudes_camilleros TO anon, authenticated, service_role;
-    GRANT ALL ON TABLE public.camilleros_personal TO anon, authenticated, service_role;
-    
-    GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
-    
-    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
-    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
-  `);
+rl.on('line', (line) => {
+  const trMatches = line.match(/"id":\s*"([^"]+)",\s*"request_id":\s*"([^"]+)",\s*"patient":\s*"([^"]+)"/g);
+  if (trMatches) {
+    trMatches.forEach(m => {
+      allFound.set(m, true);
+    });
+  }
+});
 
-  console.log('✓ All permissions granted to anon and authenticated!');
-  await client.end();
-}
-grantPermissions().catch(console.error);
+rl.on('close', () => {
+  console.log('Total unique extracted requests from transcript:', allFound.size);
+});
