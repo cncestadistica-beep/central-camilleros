@@ -981,6 +981,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
             <thead>
               <tr>
                 <th>Nombre de paciente</th>
+                <th>Servicio que solicita</th>
                 <th>Ubicación específica</th>
                 <th>Destino</th>
                 <th>Prioridad</th>
@@ -992,6 +993,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
               {visibleRequests.map((request) => (
                 <tr key={request.id} className={request.status === 'PENDIENTE' ? 'pending-row' : ''}>
                   <td><strong>{request.patient}</strong></td>
+                  <td>{request.service || '—'}</td>
                   <td>{request.location}</td>
                   <td>{request.destination}</td>
                   <td>
@@ -1016,7 +1018,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
               ))}
               {!visibleRequests.length && (
                 <tr>
-                  <td colSpan={6} className="empty-state">No hay traslados activos con estos filtros.</td>
+                  <td colSpan={7} className="empty-state">No hay traslados activos con estos filtros.</td>
                 </tr>
               )}
             </tbody>
@@ -1080,6 +1082,10 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
               <div className="summary-item">
                 <span>Paciente</span>
                 <strong>{editRequest.patient}</strong>
+              </div>
+              <div className="summary-item">
+                <span>Servicio</span>
+                <strong>{editRequest.service || '—'}</strong>
               </div>
               <div className="summary-item">
                 <span>Ubicación</span>
