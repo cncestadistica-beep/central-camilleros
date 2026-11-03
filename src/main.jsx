@@ -92,13 +92,84 @@ const generateUniqueRequestId = (requestsList) => {
   return nextId
 }
 
+const IDB_NAME = 'camilleros_db'
+const IDB_STORE = 'requests_store'
+const IDB_KEY = 'all_requests'
+
+function openIDB() {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined' || !window.indexedDB) {
+      return resolve(null)
+    }
+    try {
+      const request = window.indexedDB.open(IDB_NAME, 1)
+      request.onupgradeneeded = (e) => {
+        const db = e.target.result
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE)
+        }
+      }
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => resolve(null)
+    } catch {
+      resolve(null)
+    }
+  })
+}
+
+async function idbGetRequests() {
+  try {
+    const db = await openIDB()
+    if (!db) return null
+    return new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readonly')
+      const store = tx.objectStore(IDB_STORE)
+      const req = store.get(IDB_KEY)
+      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : null)
+      req.onerror = () => resolve(null)
+    })
+  } catch {
+    return null
+  }
+}
+
+async function idbSetRequests(data) {
+  try {
+    const db = await openIDB()
+    if (!db) return false
+    return new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite')
+      const store = tx.objectStore(IDB_STORE)
+      store.put(data, IDB_KEY)
+      tx.oncomplete = () => resolve(true)
+      tx.onerror = () => resolve(false)
+    })
+  } catch {
+    return false
+  }
+}
+
+let memoryRequestsCache = null
+
 const persistRequests = (nextRequests) => {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRequests))
+  memoryRequestsCache = nextRequests
+  idbSetRequests(nextRequests)
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRequests))
+  } catch (e) {
+    // Si localStorage excede su límite de 5MB, guardamos los 1.000 más recientes para arranque rápido
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRequests.slice(0, 1000)))
+    } catch {}
+  }
   window.dispatchEvent(new CustomEvent(REQUESTS_UPDATED_EVENT))
   requestsChannel?.postMessage({ updatedAt: Date.now() })
 }
 
 function readRequests() {
+  if (memoryRequestsCache && memoryRequestsCache.length > 0) {
+    return memoryRequestsCache
+  }
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY)
     if (!saved) {
@@ -313,7 +384,7 @@ const fetchApiSync = async (force = false) => {
   isSyncing = true
   try {
     const cached = readRequests()
-    const shouldFetchAll = force || cached.length === 0
+    let shouldFetchAll = force || cached.length === 0
     const shouldFetchCamilleros = force || (Date.now() - lastCamillerosFetchTime > 10 * 60 * 1000) || readCamilleros().length === 0
 
     const queries = []
@@ -325,6 +396,8 @@ const fetchApiSync = async (force = false) => {
       queries.push({ sql: "SELECT * FROM solicitudes_camilleros WHERE status = 'PENDIENTE' ORDER BY created_at DESC;" })
       // 2. Últimos 25 registros para tener camilleros y observaciones actualizadas
       queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC LIMIT 25;' })
+      // 3. Conteo total de registros en la nube (1 sola fila para detectar días no sincronizados)
+      queries.push({ sql: 'SELECT COUNT(*) as total_count FROM solicitudes_camilleros;' })
     }
 
     if (shouldFetchCamilleros) {
@@ -349,17 +422,40 @@ const fetchApiSync = async (force = false) => {
     } else {
       const pendings = parseTursoResult(tursoRes.results[0]?.response?.result) || []
       const recents = parseTursoResult(tursoRes.results[1]?.response?.result) || []
-      pendingIdsSet = new Set(pendings.map(r => String(r.id)))
+      const countRes = parseTursoResult(tursoRes.results[2]?.response?.result) || []
+      const cloudTotal = countRes[0]?.total_count ? parseInt(countRes[0].total_count, 10) : 0
 
-      const combinedMap = new Map()
-      for (const item of pendings) if (item && item.id) combinedMap.set(String(item.id), item)
-      for (const item of recents) if (item && item.id) combinedMap.set(String(item.id), item)
-      rawRequests = Array.from(combinedMap.values())
+      // Si la base en la nube tiene más registros que nuestra memoria local (más de 5 de diferencia),
+      // significa que el usuario estuvo desconectado o apagado y faltan días completos en la memoria del navegador.
+      if (cloudTotal > (cached.length + 5)) {
+        try {
+          const fullRes = await directTursoExecute([{ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;' }])
+          const fullRows = parseTursoResult(fullRes?.results?.[0]?.response?.result)
+          if (fullRows && fullRows.length > 0) {
+            rawRequests = fullRows
+            shouldFetchAll = true
+          }
+        } catch (e) {
+          console.warn('Error descargando historial completo:', e)
+        }
+      }
+
+      if (!shouldFetchAll) {
+        pendingIdsSet = new Set(pendings.map(r => String(r.id)))
+
+        const combinedMap = new Map()
+        for (const item of pendings) if (item && item.id) combinedMap.set(String(item.id), item)
+        for (const item of recents) if (item && item.id) combinedMap.set(String(item.id), item)
+        rawRequests = Array.from(combinedMap.values())
+      }
 
       if (shouldFetchCamilleros) {
-        const res2 = tursoRes.results[2]?.response?.result
-        rawCamilleros = parseTursoResult(res2).map(r => r.name)
-        lastCamillerosFetchTime = Date.now()
+        const camillerosIdx = shouldFetchAll ? 1 : 3
+        const resCam = tursoRes.results[camillerosIdx]?.response?.result
+        if (resCam) {
+          rawCamilleros = parseTursoResult(resCam).map(r => r.name)
+          lastCamillerosFetchTime = Date.now()
+        }
       }
     }
 
@@ -456,6 +552,13 @@ function App() {
   useEffect(() => {
     let mounted = true
 
+    // Cargar desde IndexedDB si contiene más registros históricos que localStorage
+    idbGetRequests().then((idbData) => {
+      if (mounted && Array.isArray(idbData) && idbData.length > 0) {
+        setRequests((prev) => (idbData.length > prev.length ? idbData : prev))
+      }
+    })
+
     const doSync = async (force = false) => {
       const data = await fetchApiSync(force)
       if (mounted && data) {
@@ -466,9 +569,11 @@ function App() {
       }
     }
 
-    // Carga inicial: Si ya hay datos en caché local, solo sincroniza los últimos cambios
+    // Carga inicial: Si es historial/estadísticas o si la caché local está vacía, sincronizar completo
     const existingCached = readRequests()
-    doSync(existingCached.length === 0)
+    const initialPage = getPageFromPath()
+    const needsFullSync = existingCached.length === 0 || initialPage === 'history' || initialPage === 'analytics'
+    doSync(needsFullSync)
 
     let lastInteractionSync = Date.now()
 
@@ -490,7 +595,11 @@ function App() {
     const onPopState = () => {
       setRequests(readRequests())
       setCamilleros(readCamilleros())
-      setPage(getPageFromPath())
+      const p = getPageFromPath()
+      setPage(p)
+      if (p === 'history' || p === 'analytics') {
+        handleRefresh(false)
+      }
     }
 
     window.addEventListener('popstate', onPopState)
@@ -564,6 +673,9 @@ function App() {
     window.history.pushState({}, '', path)
     setPage(nextPage)
     window.scrollTo({ top: 0, behavior: 'smooth' })
+    if (nextPage === 'history' || nextPage === 'analytics') {
+      handleRefresh(false)
+    }
   }
 
   const handleSubmit = (form) => {
@@ -2400,6 +2512,21 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
             </button>
             <button type="button" className="analytics-link-btn excel-export-btn" onClick={handleExportExcel} title="Exportar solicitudes filtradas a Excel (.xlsx)">
               Exportar a Excel
+            </button>
+            <button
+              type="button"
+              className={`refresh-btn ${refreshState}`}
+              onClick={triggerRefresh}
+              title="Actualizar datos y estadísticas desde la nube"
+            >
+              <span className="refresh-icon" aria-hidden="true">↻</span>
+              <span>
+                {refreshState === 'refreshing'
+                  ? 'Actualizando...'
+                  : refreshState === 'success'
+                  ? '¡Actualizado!'
+                  : 'Actualizar'}
+              </span>
             </button>
           </div>
         </div>
