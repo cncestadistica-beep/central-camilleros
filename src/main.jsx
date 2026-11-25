@@ -773,6 +773,7 @@ function RequestForm({ onSubmit, requests, onNavigate }) {
     if (!form.destination.trim()) nextErrors.destination = 'Indica el destino del traslado'
     if (!form.transport) nextErrors.transport = 'Selecciona el medio de transporte'
     if (!form.oxygen) nextErrors.oxygen = 'Indica si requiere soporte de O2'
+    if (!form.isolation) nextErrors.isolation = 'Selecciona el tipo de aislamiento'
     setErrors(nextErrors)
     return Object.keys(nextErrors).length === 0
   }
