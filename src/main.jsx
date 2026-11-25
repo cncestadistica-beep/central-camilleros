@@ -18,7 +18,7 @@ const services = [
   'cirugia',
   'consulta externa',
 ]
-
+const isolationOptions = ['contacto', 'aereo', 'respiratorio', 'protector', 'no aplica']
 const STORAGE_KEY = 'turno-camilleros-solicitudes'
 const STORAGE_KEY_CAMILLEROS = 'turno-camilleros-lista-camilleros'
 const REQUESTS_UPDATED_EVENT = 'turno-camilleros-solicitudes-updated'
@@ -47,6 +47,7 @@ const initialForm = {
   destination: '',
   transport: 'wheelchair',
   oxygen: '',
+  isolation: '',
   observation: '',
   priority: 'media',
 }
@@ -191,6 +192,7 @@ function readRequests() {
       service: item.service || '',
       transport: item.transport || '',
       oxygen: item.oxygen || '',
+      isolation: item.isolation || '',
       observation: item.observation || '',
       mover: item.mover || 'sin asignar',
       centralObservation: item.centralObservation || '',
@@ -333,6 +335,7 @@ const mapIncomingRequest = (item, idx) => ({
   service: item.service || '',
   transport: item.transport || '',
   oxygen: item.oxygen || '',
+  isolation: item.isolation || '',
   observation: item.observation || '',
   mover: item.mover || 'sin asignar',
   centralObservation: item.central_observation || item.centralObservation || '',
@@ -483,12 +486,12 @@ const fetchApiSync = async (force = false) => {
 
 const saveApiRequest = async (request) => {
   try {
-    const sql = `
+        const sql = `
       INSERT OR REPLACE INTO solicitudes_camilleros (
         id, request_id, patient, record, service, location, destination,
         transport, oxygen, observation, status, mover, central_observation,
-        timestamp, assignment_time, movement_time, priority
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        timestamp, assignment_time, movement_time, priority, isolation
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     `
     const args = [
       String(request.id),
@@ -507,8 +510,11 @@ const saveApiRequest = async (request) => {
       request.timestamp || '',
       request.assignmentTime || request.assignment_time || null,
       request.movementTime || request.movement_time || 'pendiente',
-      (request.priority || 'media').trim().toLowerCase()
+      (request.priority || 'media').trim().toLowerCase(),
+            (request.priority || 'media').trim().toLowerCase(),
+      (request.isolation || '').trim().toLowerCase()
     ]
+    
     await directTursoExecute([{ sql, args }])
   } catch (err) {
     console.error('Error guardando en Turso Cloud:', err)
@@ -693,6 +699,7 @@ function App() {
       location: (form.location || '').trim().toLowerCase(),
       destination: (form.destination || '').trim().toLowerCase(),
       oxygen: (form.oxygen || '').trim().toLowerCase(),
+      isolation: (form.isolation || '').trim().toLowerCase(),
       transport: form.transport === 'wheelchair' ? 'silla de ruedas' : form.transport === 'bed' ? 'cama' : 'camilla ambulancia',
       observation: (form.observation || '').trim().toLowerCase() || '',
       service: (form.service || '').trim().toLowerCase(),
@@ -858,6 +865,9 @@ function RequestForm({ onSubmit, requests, onNavigate }) {
               </Field>
               <Field label="Prioridad del traslado" required error={errors.priority}>
                 <Dropdown value={form.priority} options={['alta', 'media', 'baja']} placeholder="elegir prioridad" onChange={(value) => update('priority', value)} />
+              </Field>
+              <Field label="Aislamiento" required error={errors.isolation}>
+                <Dropdown value={form.isolation} options={isolationOptions} placeholder="elegir aislamiento" onChange={(value) => update('isolation', value)} />
               </Field>
             </div>
           </div>
@@ -1159,6 +1169,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
               <div className="detail-item"><span>Destino</span><strong>{detailRequest.destination}</strong></div>
               <div className="detail-item"><span>Medio de transporte</span><strong>{detailRequest.transport}</strong></div>
               <div className="detail-item"><span>Soporte de O2</span><strong>{detailRequest.oxygen}</strong></div>
+              <div className="detail-item"><span>Aislamiento</span><strong>{detailRequest.isolation || '—'}</strong></div> 
               <div className="detail-item full-width"><span>Observaciones solicitud</span><strong>{detailRequest.observation || 'Sin observaciones'}</strong></div>
               <div className="detail-item"><span>Confirmación de movimiento</span><strong className={`status-badge-tag ${detailRequest.status.toLowerCase().replaceAll(' ', '-')}`}>{detailRequest.status}</strong></div>
               <div className="detail-item"><span>Camillero que realiza</span><strong>{detailRequest.mover}</strong></div>
@@ -1928,6 +1939,7 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
               <div className="detail-item"><span>Destino</span><strong>{detailRequest.destination}</strong></div>
               <div className="detail-item"><span>Medio de transporte</span><strong>{detailRequest.transport}</strong></div>
               <div className="detail-item"><span>Soporte de O2</span><strong>{detailRequest.oxygen}</strong></div>
+              <div className="detail-item"><span>Aislamiento</span><strong>{detailRequest.isolation || '—'}</strong></div> 
               <div className="detail-item full-width"><span>Observaciones solicitud</span><strong>{detailRequest.observation || 'Sin observaciones'}</strong></div>
               <div className="detail-item"><span>Confirmación de movimiento</span><strong className={`status-badge-tag ${detailRequest.status.toLowerCase().replaceAll(' ', '-')}`}>{detailRequest.status}</strong></div>
               <div className="detail-item"><span>Camillero que realiza</span><strong>{detailRequest.mover}</strong></div>
