@@ -406,6 +406,7 @@ const fetchApiSync = async (force = false) => {
     if (shouldFetchCamilleros) {
       queries.push({ sql: 'SELECT name FROM camilleros_personal WHERE active = 1 ORDER BY name ASC;' })
     }
+    const camillerosQueryIdx = shouldFetchCamilleros ? queries.length - 1 : -1
 
     const tursoRes = await directTursoExecute(queries)
     if (!tursoRes || !tursoRes.results) return null
@@ -452,11 +453,10 @@ const fetchApiSync = async (force = false) => {
         rawRequests = Array.from(combinedMap.values())
       }
 
-      if (shouldFetchCamilleros) {
-        const camillerosIdx = shouldFetchAll ? 1 : 3
-        const resCam = tursoRes.results[camillerosIdx]?.response?.result
+        if (shouldFetchCamilleros) {
+        const resCam = tursoRes.results[camillerosQueryIdx]?.response?.result
         if (resCam) {
-          rawCamilleros = parseTursoResult(resCam).map(r => r.name)
+          rawCamilleros = parseTursoResult(resCam).map(r => r.name).filter(Boolean)
           lastCamillerosFetchTime = Date.now()
         }
       }
