@@ -1,848 +1,1024 @@
-import React, { StrictMode, useEffect, useMemo, useRef, useState } from 'react'
-import { createRoot } from 'react-dom/client'
-import * as XLSX from 'xlsx'
-import './styles.css'
-
+import React, { StrictMode, useEffect, useMemo, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import * as XLSX from "xlsx";
+import "./styles.css";
 
 const services = [
-  'urgencias adultos',
-  'hospitalización 1er piso',
-  'urgencias pediatricas',
-  'idime',
-  'hospitalización 3er piso',
-  'hospitalización 5to piso',
-  'hospitalización 6to piso',
-  'uci adultos',
-  'uci neonatal',
-  'sala de partos',
-  'cirugia',
-  'consulta externa',
-]
-const isolationOptions = ['contacto', 'aereo', 'respiratorio', 'protector', 'no aplica']
-const STORAGE_KEY = 'turno-camilleros-solicitudes'
-const STORAGE_KEY_CAMILLEROS = 'turno-camilleros-lista-camilleros'
-const REQUESTS_UPDATED_EVENT = 'turno-camilleros-solicitudes-updated'
-const requestsChannel = typeof window !== 'undefined' && 'BroadcastChannel' in window
-  ? new BroadcastChannel(REQUESTS_UPDATED_EVENT)
-  : null
+  "urgencias adultos",
+  "hospitalización 1er piso",
+  "urgencias pediatricas",
+  "idime",
+  "hospitalización 3er piso",
+  "hospitalización 5to piso",
+  "hospitalización 6to piso",
+  "uci adultos",
+  "uci neonatal",
+  "sala de partos",
+  "cirugia",
+  "consulta externa",
+];
+const isolationOptions = [
+  "contacto",
+  "aereo",
+  "respiratorio",
+  "protector",
+  "no aplica",
+];
+const STORAGE_KEY = "turno-camilleros-solicitudes";
+const STORAGE_KEY_CAMILLEROS = "turno-camilleros-lista-camilleros";
+const REQUESTS_UPDATED_EVENT = "turno-camilleros-solicitudes-updated";
+const requestsChannel =
+  typeof window !== "undefined" && "BroadcastChannel" in window
+    ? new BroadcastChannel(REQUESTS_UPDATED_EVENT)
+    : null;
 
 const defaultCamilleros = [
-  'victor perafan',
-  'carlos herreño',
-  'andrés castro',
-  'jefry arango',
-  'julián vera',
-  'cesar copete',
-  'sergio peña',
-  'stiven gonzalez',
-  'david muñoz',
-  'santiago soza',
-]
+  "victor perafan",
+  "carlos herreño",
+  "andrés castro",
+  "jefry arango",
+  "julián vera",
+  "cesar copete",
+  "sergio peña",
+  "stiven gonzalez",
+  "david muñoz",
+  "santiago soza",
+];
 
 const initialForm = {
-  patient: '',
-  record: '',
-  service: '',
-  location: '',
-  destination: '',
-  transport: 'wheelchair',
-  oxygen: '',
-  isolation: '',
-  observation: '',
-  priority: 'media',
-}
+  patient: "",
+  record: "",
+  service: "",
+  location: "",
+  destination: "",
+  transport: "wheelchair",
+  oxygen: "",
+  isolation: "",
+  observation: "",
+  priority: "media",
+};
 
-const demoRequests = []
+const demoRequests = [];
 
 const formatPatientName = (value) => {
-  if (!value) return ''
+  if (!value) return "";
   return value
-    .split(' ')
-    .map((word) => (word ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : ''))
-    .join(' ')
-}
+    .split(" ")
+    .map((word) =>
+      word ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : "",
+    )
+    .join(" ");
+};
 
 const formatLowercase = (value) => {
-  if (!value) return ''
-  return value.toLowerCase()
-}
+  if (!value) return "";
+  return value.toLowerCase();
+};
 
 const generateNextRequestId = (requestsList) => {
-  let maxIdNum = 1000
-  for (const req of (requestsList || [])) {
+  let maxIdNum = 1000;
+  for (const req of requestsList || []) {
     if (req.requestId) {
-      const match = String(req.requestId).match(/\d+/)
+      const match = String(req.requestId).match(/\d+/);
       if (match) {
-        const num = parseInt(match[0], 10)
+        const num = parseInt(match[0], 10);
         if (!isNaN(num) && num > maxIdNum) {
-          maxIdNum = num
+          maxIdNum = num;
         }
       }
     }
   }
-  return `TR-${maxIdNum + 1}`
-}
+  return `TR-${maxIdNum + 1}`;
+};
 
 const generateUniqueRequestId = (requestsList) => {
-  const usedIds = new Set((requestsList || []).map((request) => String(request.requestId || '').toUpperCase()))
-  let nextId = generateNextRequestId(requestsList)
+  const usedIds = new Set(
+    (requestsList || []).map((request) =>
+      String(request.requestId || "").toUpperCase(),
+    ),
+  );
+  let nextId = generateNextRequestId(requestsList);
   while (usedIds.has(nextId.toUpperCase())) {
-    const number = Number(nextId.replace(/\D/g, '')) + 1
-    nextId = `TR-${number}`
+    const number = Number(nextId.replace(/\D/g, "")) + 1;
+    nextId = `TR-${number}`;
   }
-  return nextId
-}
+  return nextId;
+};
 
-const IDB_NAME = 'camilleros_db'
-const IDB_STORE = 'requests_store'
-const IDB_KEY = 'all_requests'
+const IDB_NAME = "camilleros_db";
+const IDB_STORE = "requests_store";
+const IDB_KEY = "all_requests";
 
 function openIDB() {
   return new Promise((resolve) => {
-    if (typeof window === 'undefined' || !window.indexedDB) {
-      return resolve(null)
+    if (typeof window === "undefined" || !window.indexedDB) {
+      return resolve(null);
     }
     try {
-      const request = window.indexedDB.open(IDB_NAME, 1)
+      const request = window.indexedDB.open(IDB_NAME, 1);
       request.onupgradeneeded = (e) => {
-        const db = e.target.result
+        const db = e.target.result;
         if (!db.objectStoreNames.contains(IDB_STORE)) {
-          db.createObjectStore(IDB_STORE)
+          db.createObjectStore(IDB_STORE);
         }
-      }
-      request.onsuccess = () => resolve(request.result)
-      request.onerror = () => resolve(null)
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => resolve(null);
     } catch {
-      resolve(null)
+      resolve(null);
     }
-  })
+  });
 }
 
 async function idbGetRequests() {
   try {
-    const db = await openIDB()
-    if (!db) return null
+    const db = await openIDB();
+    if (!db) return null;
     return new Promise((resolve) => {
-      const tx = db.transaction(IDB_STORE, 'readonly')
-      const store = tx.objectStore(IDB_STORE)
-      const req = store.get(IDB_KEY)
-      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : null)
-      req.onerror = () => resolve(null)
-    })
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.get(IDB_KEY);
+      req.onsuccess = () =>
+        resolve(Array.isArray(req.result) ? req.result : null);
+      req.onerror = () => resolve(null);
+    });
   } catch {
-    return null
+    return null;
   }
 }
 
 async function idbSetRequests(data) {
   try {
-    const db = await openIDB()
-    if (!db) return false
+    const db = await openIDB();
+    if (!db) return false;
     return new Promise((resolve) => {
-      const tx = db.transaction(IDB_STORE, 'readwrite')
-      const store = tx.objectStore(IDB_STORE)
-      store.put(data, IDB_KEY)
-      tx.oncomplete = () => resolve(true)
-      tx.onerror = () => resolve(false)
-    })
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      const store = tx.objectStore(IDB_STORE);
+      store.put(data, IDB_KEY);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    });
   } catch {
-    return false
+    return false;
   }
 }
 
-let memoryRequestsCache = null
+let memoryRequestsCache = null;
 
 const persistRequests = (nextRequests) => {
-  memoryRequestsCache = nextRequests
-  idbSetRequests(nextRequests)
+  memoryRequestsCache = nextRequests;
+  idbSetRequests(nextRequests);
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRequests))
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRequests));
   } catch (e) {
     // Si localStorage excede su límite de 5MB, guardamos los 1.000 más recientes para arranque rápido
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRequests.slice(0, 1000)))
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(nextRequests.slice(0, 1000)),
+      );
     } catch {}
   }
-  window.dispatchEvent(new CustomEvent(REQUESTS_UPDATED_EVENT))
-  requestsChannel?.postMessage({ updatedAt: Date.now() })
-}
+  window.dispatchEvent(new CustomEvent(REQUESTS_UPDATED_EVENT));
+  requestsChannel?.postMessage({ updatedAt: Date.now() });
+};
 
 function readRequests() {
   if (memoryRequestsCache && memoryRequestsCache.length > 0) {
-    return memoryRequestsCache
+    return memoryRequestsCache;
   }
   try {
-    const saved = window.localStorage.getItem(STORAGE_KEY)
+    const saved = window.localStorage.getItem(STORAGE_KEY);
     if (!saved) {
-      return []
+      return [];
     }
-    const parsed = JSON.parse(saved)
+    const parsed = JSON.parse(saved);
     if (!Array.isArray(parsed) || !parsed.length) {
-      return []
+      return [];
     }
 
     return parsed.map((item, idx) => ({
       ...item,
       id: item.id || `req-${idx}`,
       requestId: item.requestId || `TR-${1001 + idx}`,
-      patient: formatPatientName(item.patient || ''),
-      record: item.record ? String(item.record) : '',
-      location: item.location || '',
-      destination: item.destination || '',
-      service: item.service || '',
-      transport: item.transport || '',
-      oxygen: item.oxygen || '',
-      isolation: item.isolation || '',
-      observation: item.observation || '',
-      mover: item.mover || 'sin asignar',
-      centralObservation: item.centralObservation || '',
-      status: String(item.status || 'PENDIENTE').toUpperCase(),
-      timestamp: item.timestamp || '',
+      patient: formatPatientName(item.patient || ""),
+      record: item.record ? String(item.record) : "",
+      location: item.location || "",
+      destination: item.destination || "",
+      service: item.service || "",
+      transport: item.transport || "",
+      oxygen: item.oxygen || "",
+      isolation: item.isolation || "",
+      observation: item.observation || "",
+      mover: item.mover || "sin asignar",
+      centralObservation: item.centralObservation || "",
+      status: String(item.status || "PENDIENTE").toUpperCase(),
+      timestamp: item.timestamp || "",
       assignmentTime: item.assignmentTime || null,
-      movementTime: item.movementTime || 'pendiente',
-    }))
+      movementTime: item.movementTime || "pendiente",
+    }));
   } catch {
-    return []
+    return [];
   }
 }
 
 function readCamilleros() {
   try {
-    const saved = window.localStorage.getItem(STORAGE_KEY_CAMILLEROS)
+    const saved = window.localStorage.getItem(STORAGE_KEY_CAMILLEROS);
     if (saved !== null) {
-      const parsed = JSON.parse(saved)
-      if (Array.isArray(parsed)) return parsed
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) return parsed;
     }
-    return defaultCamilleros
+    return defaultCamilleros;
   } catch {
-    return defaultCamilleros
+    return defaultCamilleros;
   }
 }
 
 const monthNames = [
-  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-]
+  "Enero",
+  "Febrero",
+  "Marzo",
+  "Abril",
+  "Mayo",
+  "Junio",
+  "Julio",
+  "Agosto",
+  "Septiembre",
+  "Octubre",
+  "Noviembre",
+  "Diciembre",
+];
 
 const parseCODate = (dateStr) => {
-  if (!dateStr || dateStr === 'Pendiente' || dateStr === 'pendiente') return null
-  const cleaned = dateStr.replace(/\s+/g, ' ').trim()
-  const parts = cleaned.split(/[\s,]+/)
-  if (!parts[0]) return null
-  const dmy = parts[0].split('/')
-  if (dmy.length < 3) return null
-  const day = parseInt(dmy[0], 10)
-  const month = parseInt(dmy[1], 10) - 1
-  const year = parseInt(dmy[2], 10)
+  if (!dateStr || dateStr === "Pendiente" || dateStr === "pendiente")
+    return null;
+  const cleaned = dateStr.replace(/\s+/g, " ").trim();
+  const parts = cleaned.split(/[\s,]+/);
+  if (!parts[0]) return null;
+  const dmy = parts[0].split("/");
+  if (dmy.length < 3) return null;
+  const day = parseInt(dmy[0], 10);
+  const month = parseInt(dmy[1], 10) - 1;
+  const year = parseInt(dmy[2], 10);
   if (parts.length > 1) {
-    const timeParts = parts[1].split(':')
-    let hours = parseInt(timeParts[0], 10)
-    const minutes = parseInt(timeParts[1] || '0', 10)
-    const seconds = parseInt(timeParts[2] || '0', 10)
-    const ampm = cleaned.toLowerCase()
-    if ((ampm.includes('p.') || ampm.includes('pm') || ampm.includes('p. m.')) && hours < 12) {
-      hours += 12
-    } else if ((ampm.includes('a.') || ampm.includes('am') || ampm.includes('a. m.')) && hours === 12) {
-      hours = 0
+    const timeParts = parts[1].split(":");
+    let hours = parseInt(timeParts[0], 10);
+    const minutes = parseInt(timeParts[1] || "0", 10);
+    const seconds = parseInt(timeParts[2] || "0", 10);
+    const ampm = cleaned.toLowerCase();
+    if (
+      (ampm.includes("p.") || ampm.includes("pm") || ampm.includes("p. m.")) &&
+      hours < 12
+    ) {
+      hours += 12;
+    } else if (
+      (ampm.includes("a.") || ampm.includes("am") || ampm.includes("a. m.")) &&
+      hours === 12
+    ) {
+      hours = 0;
     }
-    return new Date(year, month, day, hours, minutes, seconds)
+    return new Date(year, month, day, hours, minutes, seconds);
   }
-  return new Date(year, month, day)
-}
+  return new Date(year, month, day);
+};
 
 const getISODateString = (date) => {
-  if (!date || isNaN(date.getTime())) return ''
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
-}
+  if (!date || isNaN(date.getTime())) return "";
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
 
 const getTimestampISODate = (timestampStr) => {
-  const d = parseCODate(timestampStr)
-  return d ? getISODateString(d) : ''
-}
+  const d = parseCODate(timestampStr);
+  return d ? getISODateString(d) : "";
+};
 
 const calculateDurationMinutes = (startStr, endStr) => {
-  const dStart = parseCODate(startStr)
-  const dEnd = parseCODate(endStr)
-  if (!dStart || !dEnd) return null
-  const diffMs = dEnd.getTime() - dStart.getTime()
-  if (diffMs < 0) return 0
-  return Math.round(diffMs / 60000)
-}
+  const dStart = parseCODate(startStr);
+  const dEnd = parseCODate(endStr);
+  if (!dStart || !dEnd) return null;
+  const diffMs = dEnd.getTime() - dStart.getTime();
+  if (diffMs < 0) return 0;
+  return Math.round(diffMs / 60000);
+};
 
 const formatDuration = (mins) => {
-  if (mins === null || mins === undefined) return '—'
-  if (mins < 60) return `${mins} min`
-  const h = Math.floor(mins / 60)
-  const m = mins % 60
-  return m === 0 ? `${h} h` : `${h} h ${m} min`
-}
+  if (mins === null || mins === undefined) return "—";
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h} h` : `${h} h ${m} min`;
+};
 
-const TURSO_URL = 'https://camilleros-cncestadistica-beep.aws-us-east-2.turso.io/v2/pipeline'
-const TURSO_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MjIxMzU1MDksImlhdCI6MTc5MDU5OTUwOSwiaWQiOiIwMWEwZTgwYi1lYzAxLTdiMzktOGIyMC02ZTQxYWI2OTE2NGEiLCJraWQiOiJ6a2tLcGc0SDNYSFFMeE40NXI4RDNkN3RoYUlsS1BXeG42N2l0SWpxVmtFIiwicmlkIjoiZWVkZDlhZWEtNjJiOS00NmY0LWI5MDQtMzkwY2FlZmJiMTM3In0.mLLZIsgXe3HGeD3cpLmqWju2zIIsAgksxOqG5-wM_396-Cyt8bKPWI8nOx3G9sUE_S6E09KBu-ADlgdNxBEeCw'
+const TURSO_URL =
+  "https://camilleros-cncestadistica-beep.aws-us-east-2.turso.io/v2/pipeline";
+const TURSO_TOKEN =
+  "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MjIxMzU1MDksImlhdCI6MTc5MDU5OTUwOSwiaWQiOiIwMWEwZTgwYi1lYzAxLTdiMzktOGIyMC02ZTQxYWI2OTE2NGEiLCJraWQiOiJ6a2tLcGc0SDNYSFFMeE40NXI4RDNkN3RoYUlsS1BXeG42N2l0SWpxVmtFIiwicmlkIjoiZWVkZDlhZWEtNjJiOS00NmY0LWI5MDQtMzkwY2FlZmJiMTM3In0.mLLZIsgXe3HGeD3cpLmqWju2zIIsAgksxOqG5-wM_396-Cyt8bKPWI8nOx3G9sUE_S6E09KBu-ADlgdNxBEeCw";
 
 async function directTursoExecute(statements) {
   const payload = JSON.stringify({
-    requests: statements.map(s => {
-      if (typeof s === 'string') return { type: 'execute', stmt: { sql: s } }
+    requests: statements.map((s) => {
+      if (typeof s === "string") return { type: "execute", stmt: { sql: s } };
       return {
-        type: 'execute',
+        type: "execute",
         stmt: {
           sql: s.sql,
-          args: (s.args || []).map(val => {
-            if (val === null || val === undefined) return { type: 'null' }
-            if (typeof val === 'number') return { type: 'integer', value: String(val) }
-            return { type: 'text', value: String(val) }
-          })
-        }
-      }
-    })
-  })
+          args: (s.args || []).map((val) => {
+            if (val === null || val === undefined) return { type: "null" };
+            if (typeof val === "number")
+              return { type: "integer", value: String(val) };
+            return { type: "text", value: String(val) };
+          }),
+        },
+      };
+    }),
+  });
 
   const res = await fetch(TURSO_URL, {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'Authorization': `Bearer ${TURSO_TOKEN}`,
-      'Content-Type': 'application/json'
+      Authorization: `Bearer ${TURSO_TOKEN}`,
+      "Content-Type": "application/json",
     },
-    body: payload
-  })
-    if (!res.ok) throw new Error(`Turso HTTP ${res.status}`)
-  const json = await res.json()
+    body: payload,
+  });
+  if (!res.ok) throw new Error(`Turso HTTP ${res.status}`);
+  const json = await res.json();
   for (const r of json.results || []) {
-    if (r.type === 'error') console.error('Turso rechazó la consulta:', r.error?.message)
+    if (r.type === "error")
+      console.error("Turso rechazó la consulta:", r.error?.message);
   }
-  return json
+  return json;
 }
 
 function parseTursoResult(result) {
-  if (!result || !result.cols || !result.rows) return []
-  const cols = result.cols.map(c => c.name)
-  return result.rows.map(row => {
-    const obj = {}
+  if (!result || !result.cols || !result.rows) return [];
+  const cols = result.cols.map((c) => c.name);
+  return result.rows.map((row) => {
+    const obj = {};
     cols.forEach((col, idx) => {
-      obj[col] = row[idx] ? row[idx].value : null
-    })
-    return obj
-  })
+      obj[col] = row[idx] ? row[idx].value : null;
+    });
+    return obj;
+  });
 }
 
 const mapIncomingRequest = (item, idx) => ({
   id: item.id || `req-${idx}`,
   requestId: item.request_id || item.requestId || `TR-${1001 + idx}`,
-  patient: formatPatientName(item.patient || ''),
-  record: item.record ? String(item.record) : '',
-  location: item.location || '',
-  destination: item.destination || '',
-  service: item.service || '',
-  transport: item.transport || '',
-  oxygen: item.oxygen || '',
-  isolation: item.isolation || '',
-  observation: item.observation || '',
-  mover: item.mover || 'sin asignar',
-  centralObservation: item.central_observation || item.centralObservation || '',
-  status: String(item.status || 'PENDIENTE').toUpperCase(),
-  timestamp: item.timestamp || '',
+  patient: formatPatientName(item.patient || ""),
+  record: item.record ? String(item.record) : "",
+  location: item.location || "",
+  destination: item.destination || "",
+  service: item.service || "",
+  transport: item.transport || "",
+  oxygen: item.oxygen || "",
+  isolation: item.isolation || "",
+  observation: item.observation || "",
+  mover: item.mover || "sin asignar",
+  centralObservation: item.central_observation || item.centralObservation || "",
+  status: String(item.status || "PENDIENTE").toUpperCase(),
+  timestamp: item.timestamp || "",
   assignmentTime: item.assignment_time || item.assignmentTime || null,
-  movementTime: item.movement_time || item.movementTime || 'pendiente',
-  priority: (item.priority || 'media').trim().toLowerCase(),
-})
+  movementTime: item.movement_time || item.movementTime || "pendiente",
+  priority: (item.priority || "media").trim().toLowerCase(),
+});
 
-const mergeRequests = (cachedList = [], incomingList = [], authoritativePendingIds = null) => {
-  const map = new Map()
-  
+const mergeRequests = (
+  cachedList = [],
+  incomingList = [],
+  authoritativePendingIds = null,
+) => {
+  const map = new Map();
+
   // 1. Put cached items in map
   for (const item of cachedList) {
-    if (item && item.id) map.set(String(item.id), item)
+    if (item && item.id) map.set(String(item.id), item);
   }
-  
+
   // 2. Overwrite with incoming authoritative items from database
   for (const item of incomingList) {
-    if (item && item.id) map.set(String(item.id), item)
+    if (item && item.id) map.set(String(item.id), item);
   }
 
   // 3. If we received the authoritative pending list from Turso, reconcile all items
   if (authoritativePendingIds instanceof Set) {
     for (const [id, item] of map.entries()) {
-      if (String(item.status || '').toUpperCase() === 'PENDIENTE') {
+      if (String(item.status || "").toUpperCase() === "PENDIENTE") {
         if (!authoritativePendingIds.has(String(id))) {
           // Ya no está pendiente en la base de datos central de Turso
-          item.status = 'REALIZADO'
+          item.status = "REALIZADO";
         }
       }
     }
   }
 
-  const result = Array.from(map.values())
+  const result = Array.from(map.values());
   return result.sort((a, b) => {
-    const da = parseCODate(a.timestamp) || new Date(0)
-    const db = parseCODate(b.timestamp) || new Date(0)
-    return db.getTime() - da.getTime()
-  })
-}
+    const da = parseCODate(a.timestamp) || new Date(0);
+    const db = parseCODate(b.timestamp) || new Date(0);
+    return db.getTime() - da.getTime();
+  });
+};
 
-let lastCamillerosFetchTime = 0
-let isSyncing = false
+let lastCamillerosFetchTime = 0;
+let isSyncing = false;
 
 const fetchApiSync = async (force = false) => {
-  if (isSyncing) return null
-  isSyncing = true
+  if (isSyncing) return null;
+  isSyncing = true;
   try {
-    const cached = readRequests()
-    let shouldFetchAll = force || cached.length === 0
-    const shouldFetchCamilleros = force || (Date.now() - lastCamillerosFetchTime > 10 * 60 * 1000) || readCamilleros().length === 0
+    const cached = readRequests();
+    let shouldFetchAll = force || cached.length === 0;
+    const shouldFetchCamilleros =
+      force ||
+      Date.now() - lastCamillerosFetchTime > 10 * 60 * 1000 ||
+      readCamilleros().length === 0;
 
-    const queries = []
+    const queries = [];
 
     if (shouldFetchAll) {
-      queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;' })
+      queries.push({
+        sql: "SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;",
+      });
     } else {
       // 1. Todos los traslados pendientes de la institución
-      queries.push({ sql: "SELECT * FROM solicitudes_camilleros WHERE status = 'PENDIENTE' ORDER BY created_at DESC;" })
+      queries.push({
+        sql: "SELECT * FROM solicitudes_camilleros WHERE status = 'PENDIENTE' ORDER BY created_at DESC;",
+      });
       // 2. Últimos 25 registros para tener camilleros y observaciones actualizadas
-      queries.push({ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC LIMIT 25;' })
+      queries.push({
+        sql: "SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC LIMIT 25;",
+      });
       // 3. Conteo total de registros en la nube (1 sola fila para detectar días no sincronizados)
-      queries.push({ sql: 'SELECT COUNT(*) as total_count FROM solicitudes_camilleros;' })
+      queries.push({
+        sql: "SELECT COUNT(*) as total_count FROM solicitudes_camilleros;",
+      });
     }
 
     if (shouldFetchCamilleros) {
-      queries.push({ sql: 'SELECT name FROM camilleros_personal WHERE active = 1 ORDER BY name ASC;' })
+      queries.push({
+        sql: "SELECT name FROM camilleros_personal WHERE active = 1 ORDER BY name ASC;",
+      });
     }
-    const camillerosQueryIdx = shouldFetchCamilleros ? queries.length - 1 : -1
+    const camillerosQueryIdx = shouldFetchCamilleros ? queries.length - 1 : -1;
 
-    const tursoRes = await directTursoExecute(queries)
-    if (!tursoRes || !tursoRes.results) return null
+    const tursoRes = await directTursoExecute(queries);
+    if (!tursoRes || !tursoRes.results) return null;
 
-    let rawRequests = []
-    let rawCamilleros = null
-    let pendingIdsSet = null
+    let rawRequests = [];
+    let rawCamilleros = null;
+    let pendingIdsSet = null;
 
     if (shouldFetchAll) {
-      const res0 = tursoRes.results[0]?.response?.result
-      rawRequests = parseTursoResult(res0)
+      const res0 = tursoRes.results[0]?.response?.result;
+      rawRequests = parseTursoResult(res0);
       if (shouldFetchCamilleros) {
-        const res1 = tursoRes.results[1]?.response?.result
-        rawCamilleros = parseTursoResult(res1).map(r => r.name)
-        lastCamillerosFetchTime = Date.now()
+        const res1 = tursoRes.results[1]?.response?.result;
+        rawCamilleros = parseTursoResult(res1).map((r) => r.name);
+        lastCamillerosFetchTime = Date.now();
       }
     } else {
-      const pendings = parseTursoResult(tursoRes.results[0]?.response?.result) || []
-      const recents = parseTursoResult(tursoRes.results[1]?.response?.result) || []
-      const countRes = parseTursoResult(tursoRes.results[2]?.response?.result) || []
-      const cloudTotal = countRes[0]?.total_count ? parseInt(countRes[0].total_count, 10) : 0
+      const pendings =
+        parseTursoResult(tursoRes.results[0]?.response?.result) || [];
+      const recents =
+        parseTursoResult(tursoRes.results[1]?.response?.result) || [];
+      const countRes =
+        parseTursoResult(tursoRes.results[2]?.response?.result) || [];
+      const cloudTotal = countRes[0]?.total_count
+        ? parseInt(countRes[0].total_count, 10)
+        : 0;
 
       // Si la base en la nube tiene más registros que nuestra memoria local (más de 5 de diferencia),
       // significa que el usuario estuvo desconectado o apagado y faltan días completos en la memoria del navegador.
-      if (cloudTotal > (cached.length + 5)) {
+      if (cloudTotal > cached.length + 5) {
         try {
-          const fullRes = await directTursoExecute([{ sql: 'SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;' }])
-          const fullRows = parseTursoResult(fullRes?.results?.[0]?.response?.result)
+          const fullRes = await directTursoExecute([
+            {
+              sql: "SELECT * FROM solicitudes_camilleros ORDER BY created_at DESC;",
+            },
+          ]);
+          const fullRows = parseTursoResult(
+            fullRes?.results?.[0]?.response?.result,
+          );
           if (fullRows && fullRows.length > 0) {
-            rawRequests = fullRows
-            shouldFetchAll = true
+            rawRequests = fullRows;
+            shouldFetchAll = true;
           }
         } catch (e) {
-          console.warn('Error descargando historial completo:', e)
+          console.warn("Error descargando historial completo:", e);
         }
       }
 
       if (!shouldFetchAll) {
-        pendingIdsSet = new Set(pendings.map(r => String(r.id)))
+        pendingIdsSet = new Set(pendings.map((r) => String(r.id)));
 
-        const combinedMap = new Map()
-        for (const item of pendings) if (item && item.id) combinedMap.set(String(item.id), item)
-        for (const item of recents) if (item && item.id) combinedMap.set(String(item.id), item)
-        rawRequests = Array.from(combinedMap.values())
+        const combinedMap = new Map();
+        for (const item of pendings)
+          if (item && item.id) combinedMap.set(String(item.id), item);
+        for (const item of recents)
+          if (item && item.id) combinedMap.set(String(item.id), item);
+        rawRequests = Array.from(combinedMap.values());
       }
 
-        if (shouldFetchCamilleros) {
-        const resCam = tursoRes.results[camillerosQueryIdx]?.response?.result
+      if (shouldFetchCamilleros) {
+        const resCam = tursoRes.results[camillerosQueryIdx]?.response?.result;
         if (resCam) {
-          rawCamilleros = parseTursoResult(resCam).map(r => r.name).filter(Boolean)
-          lastCamillerosFetchTime = Date.now()
+          rawCamilleros = parseTursoResult(resCam)
+            .map((r) => r.name)
+            .filter(Boolean);
+          lastCamillerosFetchTime = Date.now();
         }
       }
     }
 
-    if (rawRequests.length > 0 || shouldFetchAll || (pendingIdsSet && pendingIdsSet.size === 0)) {
-      let mappedRequests = rawRequests.map(mapIncomingRequest)
+    if (
+      rawRequests.length > 0 ||
+      shouldFetchAll ||
+      (pendingIdsSet && pendingIdsSet.size === 0)
+    ) {
+      let mappedRequests = rawRequests.map(mapIncomingRequest);
       if (!shouldFetchAll && cached.length > 0) {
-        mappedRequests = mergeRequests(cached, mappedRequests, pendingIdsSet)
+        mappedRequests = mergeRequests(cached, mappedRequests, pendingIdsSet);
       }
-      persistRequests(mappedRequests)
+      persistRequests(mappedRequests);
       if (Array.isArray(rawCamilleros) && rawCamilleros.length > 0) {
-        window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(rawCamilleros))
+        window.localStorage.setItem(
+          STORAGE_KEY_CAMILLEROS,
+          JSON.stringify(rawCamilleros),
+        );
       }
       return {
         requests: mappedRequests,
-        camilleros: (Array.isArray(rawCamilleros) && rawCamilleros.length > 0) ? rawCamilleros : readCamilleros(),
-      }
+        camilleros:
+          Array.isArray(rawCamilleros) && rawCamilleros.length > 0
+            ? rawCamilleros
+            : readCamilleros(),
+      };
     }
   } catch (err) {
-    console.error('Error sincronizando con Turso Cloud:', err)
+    console.error("Error sincronizando con Turso Cloud:", err);
   } finally {
-    isSyncing = false
+    isSyncing = false;
   }
-  return null
-}
+  return null;
+};
 
 const saveApiRequest = async (request) => {
   try {
-        const sql = `
+    const sql = `
       INSERT OR REPLACE INTO solicitudes_camilleros (
         id, request_id, patient, record, service, location, destination,
         transport, oxygen, observation, status, mover, central_observation,
         timestamp, assignment_time, movement_time, priority, isolation
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-    `
+    `;
     const args = [
       String(request.id),
-      request.requestId || request.request_id || '',
-      request.patient || '',
-      request.record ? String(request.record) : '',
-      request.service || '',
-      request.location || '',
-      request.destination || '',
-      request.transport || 'silla de ruedas',
-      request.oxygen || 'no',
-      request.observation || '',
-      (request.status || 'PENDIENTE').toUpperCase(),
-      (request.mover || 'sin asignar').toLowerCase().trim(),
-      request.centralObservation || request.central_observation || '',
-      request.timestamp || '',
+      request.requestId || request.request_id || "",
+      request.patient || "",
+      request.record ? String(request.record) : "",
+      request.service || "",
+      request.location || "",
+      request.destination || "",
+      request.transport || "silla de ruedas",
+      request.oxygen || "no",
+      request.observation || "",
+      (request.status || "PENDIENTE").toUpperCase(),
+      (request.mover || "sin asignar").toLowerCase().trim(),
+      request.centralObservation || request.central_observation || "",
+      request.timestamp || "",
       request.assignmentTime || request.assignment_time || null,
-      request.movementTime || request.movement_time || 'pendiente',
-      (request.priority || 'media').trim().toLowerCase(),
-      (request.isolation || '').trim().toLowerCase()
-    ]
-    
-    await directTursoExecute([{ sql, args }])
-  } catch (err) {
-    console.error('Error guardando en Turso Cloud:', err)
-  }
-}
+      request.movementTime || request.movement_time || "pendiente",
+      (request.priority || "media").trim().toLowerCase(),
+      (request.isolation || "").trim().toLowerCase(),
+    ];
 
-const saveApiCamillero = async (name, action = 'POST') => {
-  const cleanName = (name || '').toLowerCase().trim()
-  if (!cleanName) return
+    await directTursoExecute([{ sql, args }]);
+  } catch (err) {
+    console.error("Error guardando en Turso Cloud:", err);
+  }
+};
+
+const saveApiCamillero = async (name, action = "POST") => {
+  const cleanName = (name || "").toLowerCase().trim();
+  if (!cleanName) return;
   try {
-    if (action === 'DELETE') {
-      await directTursoExecute([{
-        sql: 'UPDATE camilleros_personal SET active = 0 WHERE LOWER(TRIM(name)) = ?;',
-        args: [cleanName]
-      }])
+    if (action === "DELETE") {
+      await directTursoExecute([
+        {
+          sql: "UPDATE camilleros_personal SET active = 0 WHERE LOWER(TRIM(name)) = ?;",
+          args: [cleanName],
+        },
+      ]);
     } else {
-      await directTursoExecute([{
-        sql: 'INSERT OR REPLACE INTO camilleros_personal (name, active) VALUES (?, 1);',
-        args: [cleanName]
-      }])
+      await directTursoExecute([
+        {
+          sql: "INSERT OR REPLACE INTO camilleros_personal (name, active) VALUES (?, 1);",
+          args: [cleanName],
+        },
+      ]);
     }
   } catch (err) {
-    console.error('Error guardando camillero en Turso Cloud:', err)
+    console.error("Error guardando camillero en Turso Cloud:", err);
   }
-}
+};
 
 function App() {
-  const lastCamillerosMutationRef = useRef(0)
+  const lastCamillerosMutationRef = useRef(0);
   const getPageFromPath = () => {
-    const path = window.location.pathname
-    if (path === '/camilleros') return 'dashboard'
-    if (path === '/indicadores' || path === '/estadisticas') return 'analytics'
-    if (path === '/historial') return 'history'
-    return 'form'
-  }
+    const path = window.location.pathname;
+    if (path === "/camilleros") return "dashboard";
+    if (path === "/indicadores" || path === "/estadisticas") return "analytics";
+    if (path === "/historial") return "history";
+    return "form";
+  };
 
-  const [page, setPage] = useState(getPageFromPath)
-  const [requests, setRequests] = useState(readRequests)
-  const [camilleros, setCamilleros] = useState(readCamilleros)
+  const [page, setPage] = useState(getPageFromPath);
+  const [requests, setRequests] = useState(readRequests);
+  const [camilleros, setCamilleros] = useState(readCamilleros);
 
   useEffect(() => {
-    let mounted = true
+    let mounted = true;
 
     // Cargar desde IndexedDB si contiene más registros históricos que localStorage
     idbGetRequests().then((idbData) => {
       if (mounted && Array.isArray(idbData) && idbData.length > 0) {
-        setRequests((prev) => (idbData.length > prev.length ? idbData : prev))
+        setRequests((prev) => (idbData.length > prev.length ? idbData : prev));
       }
-    })
+    });
 
     const doSync = async (force = false) => {
-      const data = await fetchApiSync(force)
+      const data = await fetchApiSync(force);
       if (mounted && data) {
-        if (data.requests) setRequests(data.requests)
-        if (data.camilleros && Date.now() - lastCamillerosMutationRef.current > 4000) {
-          setCamilleros(data.camilleros)
+        if (data.requests) setRequests(data.requests);
+        if (
+          data.camilleros &&
+          Date.now() - lastCamillerosMutationRef.current > 4000
+        ) {
+          setCamilleros(data.camilleros);
         }
       }
-    }
+    };
 
     // Carga inicial: Si es historial/estadísticas o si la caché local está vacía, sincronizar completo
-    const existingCached = readRequests()
-    const initialPage = getPageFromPath()
-    const needsFullSync = existingCached.length === 0 || initialPage === 'history' || initialPage === 'analytics'
-    doSync(needsFullSync)
+    const existingCached = readRequests();
+    const initialPage = getPageFromPath();
+    const needsFullSync =
+      existingCached.length === 0 ||
+      initialPage === "history" ||
+      initialPage === "analytics";
+    doSync(needsFullSync);
 
-    let lastInteractionSync = Date.now()
+    let lastInteractionSync = Date.now();
 
     // Polling inteligente adaptativo (cada 10s cuando la pestaña está visible y activa)
     const interval = setInterval(() => {
-      if (typeof document !== 'undefined' && !document.hidden) {
-        lastInteractionSync = Date.now()
-        doSync(false)
+      if (typeof document !== "undefined" && !document.hidden) {
+        lastInteractionSync = Date.now();
+        doSync(false);
       }
-    }, 10000)
+    }, 10000);
 
     const triggerQuickSync = () => {
       if (Date.now() - lastInteractionSync > 2500) {
-        lastInteractionSync = Date.now()
-        doSync(false)
+        lastInteractionSync = Date.now();
+        doSync(false);
       }
-    }
+    };
 
     const onPopState = () => {
-      setRequests(readRequests())
-      setCamilleros(readCamilleros())
-      const p = getPageFromPath()
-      setPage(p)
-      if (p === 'history' || p === 'analytics') {
-        handleRefresh(false)
+      setRequests(readRequests());
+      setCamilleros(readCamilleros());
+      const p = getPageFromPath();
+      setPage(p);
+      if (p === "history" || p === "analytics") {
+        handleRefresh(false);
       }
-    }
+    };
 
-    window.addEventListener('popstate', onPopState)
-    window.addEventListener('focus', triggerQuickSync)
-    window.addEventListener('online', triggerQuickSync)
-    window.addEventListener('pageshow', triggerQuickSync)
-    document.addEventListener('visibilitychange', () => {
-      if (typeof document !== 'undefined' && !document.hidden) {
-        triggerQuickSync()
+    window.addEventListener("popstate", onPopState);
+    window.addEventListener("focus", triggerQuickSync);
+    window.addEventListener("online", triggerQuickSync);
+    window.addEventListener("pageshow", triggerQuickSync);
+    document.addEventListener("visibilitychange", () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        triggerQuickSync();
       }
-    })
+    });
 
     return () => {
-      mounted = false
-      clearInterval(interval)
-      window.removeEventListener('popstate', onPopState)
-      window.removeEventListener('focus', triggerQuickSync)
-      window.removeEventListener('online', triggerQuickSync)
-      window.removeEventListener('pageshow', triggerQuickSync)
-    }
-  }, [])
+      mounted = false;
+      clearInterval(interval);
+      window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("focus", triggerQuickSync);
+      window.removeEventListener("online", triggerQuickSync);
+      window.removeEventListener("pageshow", triggerQuickSync);
+    };
+  }, []);
 
   useEffect(() => {
     const handleStorageChange = (e) => {
       if (!e || e.key === STORAGE_KEY || !e.key) {
-        setRequests(readRequests())
+        setRequests(readRequests());
       }
       if (!e || e.key === STORAGE_KEY_CAMILLEROS || !e.key) {
-        setCamilleros(readCamilleros())
+        setCamilleros(readCamilleros());
       }
-    }
-    window.addEventListener('storage', handleStorageChange)
-    window.addEventListener(REQUESTS_UPDATED_EVENT, handleStorageChange)
-    const handleChannelMessage = () => setRequests(readRequests())
-    requestsChannel?.addEventListener('message', handleChannelMessage)
+    };
+    window.addEventListener("storage", handleStorageChange);
+    window.addEventListener(REQUESTS_UPDATED_EVENT, handleStorageChange);
+    const handleChannelMessage = () => setRequests(readRequests());
+    requestsChannel?.addEventListener("message", handleChannelMessage);
     return () => {
-      window.removeEventListener('storage', handleStorageChange)
-      window.removeEventListener(REQUESTS_UPDATED_EVENT, handleStorageChange)
-      requestsChannel?.removeEventListener('message', handleChannelMessage)
-    }
-  }, [])
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener(REQUESTS_UPDATED_EVENT, handleStorageChange);
+      requestsChannel?.removeEventListener("message", handleChannelMessage);
+    };
+  }, []);
 
-  let lastManualRefreshTime = 0
+  let lastManualRefreshTime = 0;
   const handleRefresh = async (force = false) => {
     if (Date.now() - lastManualRefreshTime < 2500) {
-      return
+      return;
     }
-    lastManualRefreshTime = Date.now()
-    const data = await fetchApiSync(force)
+    lastManualRefreshTime = Date.now();
+    const data = await fetchApiSync(force);
     if (data) {
-      if (data.requests) setRequests(data.requests)
-      if (data.camilleros) setCamilleros(data.camilleros)
+      if (data.requests) setRequests(data.requests);
+      if (data.camilleros) setCamilleros(data.camilleros);
     } else {
-      setRequests(readRequests())
-      setCamilleros(readCamilleros())
+      setRequests(readRequests());
+      setCamilleros(readCamilleros());
     }
-  }
+  };
 
-  const handleUpdateCamilleros = async (nextCamilleros, addedName, removedName) => {
-    lastCamillerosMutationRef.current = Date.now()
-    setCamilleros(nextCamilleros)
-    window.localStorage.setItem(STORAGE_KEY_CAMILLEROS, JSON.stringify(nextCamilleros))
-    if (addedName) await saveApiCamillero(addedName, 'POST')
-    if (removedName) await saveApiCamillero(removedName, 'DELETE')
-  }
+  const handleUpdateCamilleros = async (
+    nextCamilleros,
+    addedName,
+    removedName,
+  ) => {
+    lastCamillerosMutationRef.current = Date.now();
+    setCamilleros(nextCamilleros);
+    window.localStorage.setItem(
+      STORAGE_KEY_CAMILLEROS,
+      JSON.stringify(nextCamilleros),
+    );
+    if (addedName) await saveApiCamillero(addedName, "POST");
+    if (removedName) await saveApiCamillero(removedName, "DELETE");
+  };
 
   const goTo = (nextPage) => {
-    setRequests(readRequests())
-    setCamilleros(readCamilleros())
-    const path = nextPage === 'dashboard' ? '/camilleros' : nextPage === 'analytics' ? '/estadisticas' : nextPage === 'history' ? '/historial' : '/'
-    window.history.pushState({}, '', path)
-    setPage(nextPage)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-    if (nextPage === 'history' || nextPage === 'analytics') {
-      handleRefresh(false)
+    setRequests(readRequests());
+    setCamilleros(readCamilleros());
+    const path =
+      nextPage === "dashboard"
+        ? "/camilleros"
+        : nextPage === "analytics"
+          ? "/estadisticas"
+          : nextPage === "history"
+            ? "/historial"
+            : "/";
+    window.history.pushState({}, "", path);
+    setPage(nextPage);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    if (nextPage === "history" || nextPage === "analytics") {
+      handleRefresh(false);
     }
-  }
+  };
 
   const handleSubmit = (form) => {
-    const now = new Date()
-    const currentRequests = readRequests()
-    const newRequestId = generateUniqueRequestId(currentRequests)
+    const now = new Date();
+    const currentRequests = readRequests();
+    const newRequestId = generateUniqueRequestId(currentRequests);
     const request = {
       id: `${Date.now()}`,
       requestId: newRequestId,
-      timestamp: now.toLocaleString('es-CO'),
+      timestamp: now.toLocaleString("es-CO"),
       assignmentTime: null,
-      movementTime: 'pendiente',
-      patient: formatPatientName(form.patient ? form.patient.trim() : ''),
-      record: form.record ? String(form.record).trim() : '',
-      location: (form.location || '').trim().toLowerCase(),
-      destination: (form.destination || '').trim().toLowerCase(),
-      oxygen: (form.oxygen || '').trim().toLowerCase(),
-      isolation: (form.isolation || '').trim().toLowerCase(),
-      transport: form.transport === 'wheelchair' ? 'silla de ruedas' : form.transport === 'bed' ? 'cama' : 'camilla ambulancia',
-      observation: (form.observation || '').trim().toLowerCase() || '',
-      service: (form.service || '').trim().toLowerCase(),
-      status: 'PENDIENTE',
-      mover: 'sin asignar',
-      centralObservation: '',
-      priority: (form.priority || 'media').trim().toLowerCase(),
-    }
-    const nextRequests = [request, ...currentRequests]
-    setRequests(nextRequests)
-    persistRequests(nextRequests)
-    saveApiRequest(request)
-    return request
-  }
+      movementTime: "pendiente",
+      patient: formatPatientName(form.patient ? form.patient.trim() : ""),
+      record: form.record ? String(form.record).trim() : "",
+      location: (form.location || "").trim().toLowerCase(),
+      destination: (form.destination || "").trim().toLowerCase(),
+      oxygen: (form.oxygen || "").trim().toLowerCase(),
+      isolation: (form.isolation || "").trim().toLowerCase(),
+      transport:
+        form.transport === "wheelchair"
+          ? "silla de ruedas"
+          : form.transport === "bed"
+            ? "cama"
+            : "camilla ambulancia",
+      observation: (form.observation || "").trim().toLowerCase() || "",
+      service: (form.service || "").trim().toLowerCase(),
+      status: "PENDIENTE",
+      mover: "sin asignar",
+      centralObservation: "",
+      priority: (form.priority || "media").trim().toLowerCase(),
+    };
+    const nextRequests = [request, ...currentRequests];
+    setRequests(nextRequests);
+    persistRequests(nextRequests);
+    saveApiRequest(request);
+    return request;
+  };
 
   const updateRequests = (nextRequests, updatedItem) => {
-    setRequests(nextRequests)
-    persistRequests(nextRequests)
+    setRequests(nextRequests);
+    persistRequests(nextRequests);
     if (updatedItem) {
-      saveApiRequest(updatedItem)
+      saveApiRequest(updatedItem);
     }
-  }
+  };
 
   return (
-    <div className={`app-shell ${page === 'form' ? 'form-shell-bg' : page === 'analytics' ? 'analytics-shell-bg' : page === 'history' ? 'history-shell-bg' : 'dashboard-shell-bg'}`}>
-      <main className={`page-wrap ${page !== 'form' ? 'dashboard-wrap' : 'compact-form-wrap'}`}>
-        {page === 'form' ? (
-          <RequestForm onSubmit={handleSubmit} requests={requests} onNavigate={goTo} />
-        ) : page === 'dashboard' ? (
-          <DashboardPage requests={requests} camilleros={camilleros} onUpdate={updateRequests} onRefresh={handleRefresh} onNavigate={goTo} />
-        ) : page === 'history' ? (
-          <HistoryPage requests={requests} onRefresh={handleRefresh} onNavigate={goTo} />
+    <div
+      className={`app-shell ${page === "form" ? "form-shell-bg" : page === "analytics" ? "analytics-shell-bg" : page === "history" ? "history-shell-bg" : "dashboard-shell-bg"}`}
+    >
+      <main
+        className={`page-wrap ${page !== "form" ? "dashboard-wrap" : "compact-form-wrap"}`}
+      >
+        {page === "form" ? (
+          <RequestForm
+            onSubmit={handleSubmit}
+            requests={requests}
+            onNavigate={goTo}
+          />
+        ) : page === "dashboard" ? (
+          <DashboardPage
+            requests={requests}
+            camilleros={camilleros}
+            onUpdate={updateRequests}
+            onRefresh={handleRefresh}
+            onNavigate={goTo}
+          />
+        ) : page === "history" ? (
+          <HistoryPage
+            requests={requests}
+            onRefresh={handleRefresh}
+            onNavigate={goTo}
+          />
         ) : (
-          <AnalyticsPage requests={requests} camilleros={camilleros} onUpdateCamilleros={handleUpdateCamilleros} onRefresh={handleRefresh} onNavigate={goTo} />
+          <AnalyticsPage
+            requests={requests}
+            camilleros={camilleros}
+            onUpdateCamilleros={handleUpdateCamilleros}
+            onRefresh={handleRefresh}
+            onNavigate={goTo}
+          />
         )}
       </main>
       <footer className="site-footer">powered by statistics CNC 2026</footer>
     </div>
-  )
+  );
 }
 
 function RequestForm({ onSubmit, requests, onNavigate }) {
-  const [form, setForm] = useState(initialForm)
-  const [errors, setErrors] = useState({})
+  const [form, setForm] = useState(initialForm);
+  const [errors, setErrors] = useState({});
   const [submittedData, setSubmittedData] = useState(null)
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   const update = (key, value) => {
-    let formattedValue = value
-    if (key === 'patient') {
-      formattedValue = formatPatientName(value)
-    } else if (key === 'record') {
-      formattedValue = value.replace(/\D/g, '')
-    } else if (key === 'location' || key === 'destination' || key === 'observation') {
-      formattedValue = value.toLowerCase()
-    } else if (key !== 'transport') {
-      formattedValue = formatLowercase(value)
+    let formattedValue = value;
+    if (key === "patient") {
+      formattedValue = formatPatientName(value);
+    } else if (key === "record") {
+      formattedValue = value.replace(/\D/g, "");
+    } else if (
+      key === "location" ||
+      key === "destination" ||
+      key === "observation"
+    ) {
+      formattedValue = value.toLowerCase();
+    } else if (key !== "transport") {
+      formattedValue = formatLowercase(value);
     }
-    setForm((prev) => ({ ...prev, [key]: formattedValue }))
+    setForm((prev) => ({ ...prev, [key]: formattedValue }));
     if (errors[key]) {
-      setErrors((prev) => ({ ...prev, [key]: null }))
+      setErrors((prev) => ({ ...prev, [key]: null }));
     }
-  }
+  };
 
   const validate = () => {
-    const nextErrors = {}
-    if (!form.patient.trim()) nextErrors.patient = 'Ingresa el nombre del paciente'
-    if (!form.record.trim()) nextErrors.record = 'Ingresa el número de registro'
-    if (!form.service) nextErrors.service = 'Selecciona el servicio que solicita'
-    if (!form.location.trim()) nextErrors.location = 'Indica la ubicación específica'
-    if (!form.priority) nextErrors.priority = 'Selecciona la prioridad del traslado'
-    if (!form.destination.trim()) nextErrors.destination = 'Indica el destino del traslado'
-    if (!form.transport) nextErrors.transport = 'Selecciona el medio de transporte'
-    if (!form.oxygen) nextErrors.oxygen = 'Indica si requiere soporte de O2'
-    if (!form.isolation) nextErrors.isolation = 'Selecciona el tipo de aislamiento'
-    setErrors(nextErrors)
-    return Object.keys(nextErrors).length === 0
-  }
+    const nextErrors = {};
+    if (!form.patient.trim())
+      nextErrors.patient = "Ingresa el nombre del paciente";
+    if (!form.record.trim())
+      nextErrors.record = "Ingresa el número de registro";
+    if (!form.service)
+      nextErrors.service = "Selecciona el servicio que solicita";
+    if (!form.location.trim())
+      nextErrors.location = "Indica la ubicación específica";
+    if (!form.priority)
+      nextErrors.priority = "Selecciona la prioridad del traslado";
+    if (!form.destination.trim())
+      nextErrors.destination = "Indica el destino del traslado";
+    if (!form.transport)
+      nextErrors.transport = "Selecciona el medio de transporte";
+    if (!form.oxygen) nextErrors.oxygen = "Indica si requiere soporte de O2";
+    if (!form.isolation)
+      nextErrors.isolation = "Selecciona el tipo de aislamiento";
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
 
   const submit = (event) => {
-    event.preventDefault()
-    if (!validate()) return
-    const created = onSubmit(form)
-    setSubmittedData(created)
-  }
+    event.preventDefault();
+    if (!validate()) return;
+    const created = onSubmit(form);
+    setSubmittedData(created);
+  };
 
+  // El botón solo abre la ventana de confirmación
   const handleClear = () => {
-    setForm(initialForm)
-    setErrors({})
-  }
+    setShowClearConfirm(true);
+  };
 
+  // Esta es la que realmente borra (usa lo que ya tenías dentro de handleClear)
+  const confirmClear = () => {
+    setForm(initialForm);
+    setErrors({});
+    setShowClearConfirm(false);
+  };
   const handleNewSubmission = () => {
-    setSubmittedData(null)
-    setForm(initialForm)
-    setErrors({})
-  }
+    setSubmittedData(null);
+    setForm(initialForm);
+    setErrors({});
+  };
 
   if (submittedData) {
     return (
-      <section className="confirmation-page" aria-labelledby="confirmation-title">
+      <section
+        className="confirmation-page"
+        aria-labelledby="confirmation-title"
+      >
         <div className="confirmation-card">
-          <div className="success-icon" aria-hidden="true">✓</div>
+          <div className="success-icon" aria-hidden="true">
+            ✓
+          </div>
           <h1 id="confirmation-title">Solicitud enviada</h1>
           <p className="confirmation-copy">
-            Se ha registrado correctamente la solicitud de traslado del paciente.
+            Se ha registrado correctamente la solicitud de traslado del
+            paciente.
           </p>
           <div className="summary-box three-items">
             <div>
               <span>ID de Solicitud</span>
-              <strong className="id-highlight">{submittedData.requestId || 'TR-1000'}</strong>
+              <strong className="id-highlight">
+                {submittedData.requestId || "TR-1000"}
+              </strong>
             </div>
             <div>
               <span>Número de Registro</span>
               <strong>{submittedData.record}</strong>
             </div>
             <div>
-               <span>Paciente</span>
-               <strong>{submittedData.patient}</strong>
+              <span>Paciente</span>
+              <strong>{submittedData.patient}</strong>
             </div>
           </div>
-          <button className="submit-button wide-button" type="button" onClick={handleNewSubmission}>
+          <button
+            className="submit-button wide-button"
+            type="button"
+            onClick={handleNewSubmission}
+          >
             Enviar otra solicitud
           </button>
-          <button className="clear-button wide-button" type="button" onClick={() => onNavigate('dashboard')}>
+          <button
+            className="clear-button wide-button"
+            type="button"
+            onClick={() => onNavigate("dashboard")}
+          >
             Ir a la Central
           </button>
         </div>
       </section>
-    )
+    );
   }
 
   return (
-    <section className="form-page compact-form-page" aria-labelledby="form-title">
+    <section
+      className="form-page compact-form-page"
+      aria-labelledby="form-title"
+    >
       <header className="dashboard-hero-banner form-hero-banner">
         <div className="banner-text">
           <p className="eyebrow">SOLICITUD DE SERVICIO</p>
           <h1 id="form-title">Solicitudes de traslados</h1>
-          <p className="dashboard-subtitle">Completa los datos para solicitar el traslado del paciente.</p>
+          <p className="dashboard-subtitle">
+            Completa los datos para solicitar el traslado del paciente.
+          </p>
         </div>
         <div className="banner-right">
-          <img className="banner-logo" src="/logooo-Photoroom.png" alt="Clínica Nueva de Cali" />
+          <img
+            className="banner-logo"
+            src="/logooo-Photoroom.png"
+            alt="Clínica Nueva de Cali"
+          />
         </div>
       </header>
 
@@ -853,25 +1029,69 @@ function RequestForm({ onSubmit, requests, onNavigate }) {
 
         <div className="form-sections-grid">
           <div className="form-column-card">
-            <div className="section-header-bar">Información del Paciente y Servicio</div>
+            <div className="section-header-bar">
+              Información del Paciente y Servicio
+            </div>
             <div className="column-fields-body">
               <Field label="Nombre de paciente" required error={errors.patient}>
-                <input aria-label="Nombre de paciente" value={form.patient} onChange={(e) => update('patient', e.target.value)} placeholder="ej. Juan Pérez" />
+                <input
+                  aria-label="Nombre de paciente"
+                  value={form.patient}
+                  onChange={(e) => update("patient", e.target.value)}
+                  placeholder="ej. Juan Pérez"
+                />
               </Field>
               <Field label="Registro" required error={errors.record}>
-                <input aria-label="Registro" value={form.record} onChange={(e) => update('record', e.target.value)} placeholder="ej. 3425873" />
+                <input
+                  aria-label="Registro"
+                  value={form.record}
+                  onChange={(e) => update("record", e.target.value)}
+                  placeholder="ej. 3425873"
+                />
               </Field>
-              <Field label="Servicio que solicita traslado" required error={errors.service}>
-                <Dropdown value={form.service} options={services} placeholder="elegir servicio" onChange={(value) => update('service', value)} />
+              <Field
+                label="Servicio que solicita traslado"
+                required
+                error={errors.service}
+              >
+                <Dropdown
+                  value={form.service}
+                  options={services}
+                  placeholder="elegir servicio"
+                  onChange={(value) => update("service", value)}
+                />
               </Field>
-              <Field label="Ubicación específica" required error={errors.location}>
-                <input aria-label="Ubicación específica" value={form.location} onChange={(e) => update('location', e.target.value)} placeholder="ej. urgencias cubículo 4" />
+              <Field
+                label="Ubicación específica"
+                required
+                error={errors.location}
+              >
+                <input
+                  aria-label="Ubicación específica"
+                  value={form.location}
+                  onChange={(e) => update("location", e.target.value)}
+                  placeholder="ej. urgencias cubículo 4"
+                />
               </Field>
-              <Field label="Prioridad del traslado" required error={errors.priority}>
-                <Dropdown value={form.priority} options={['alta', 'media', 'baja']} placeholder="elegir prioridad" onChange={(value) => update('priority', value)} />
+              <Field
+                label="Prioridad del traslado"
+                required
+                error={errors.priority}
+              >
+                <Dropdown
+                  value={form.priority}
+                  options={["alta", "media", "baja"]}
+                  placeholder="elegir prioridad"
+                  onChange={(value) => update("priority", value)}
+                />
               </Field>
               <Field label="Aislamiento" required error={errors.isolation}>
-                <Dropdown value={form.isolation} options={isolationOptions} placeholder="elegir aislamiento" onChange={(value) => update('isolation', value)} />
+                <Dropdown
+                  value={form.isolation}
+                  options={isolationOptions}
+                  placeholder="elegir aislamiento"
+                  onChange={(value) => update("isolation", value)}
+                />
               </Field>
             </div>
           </div>
@@ -880,17 +1100,35 @@ function RequestForm({ onSubmit, requests, onNavigate }) {
             <div className="section-header-bar">Detalles del Traslado</div>
             <div className="column-fields-body">
               <Field label="Destino" required error={errors.destination}>
-                <input aria-label="Destino" value={form.destination} onChange={(e) => update('destination', e.target.value)} placeholder="ej. rayos x / tac" />
+                <input
+                  aria-label="Destino"
+                  value={form.destination}
+                  onChange={(e) => update("destination", e.target.value)}
+                  placeholder="ej. rayos x / tac"
+                />
               </Field>
-              <Field label="Medio de transporte" required error={errors.transport}>
+              <Field
+                label="Medio de transporte"
+                required
+                error={errors.transport}
+              >
                 <div className="radio-list radio-stacked">
                   {[
-                    ['silla de ruedas', 'wheelchair'],
-                    ['cama', 'bed'],
-                    ['camilla ambulancia', 'ambulance'],
+                    ["silla de ruedas", "wheelchair"],
+                    ["cama", "bed"],
+                    ["camilla ambulancia", "ambulance"],
                   ].map(([label, value]) => (
-                    <label className={`radio-option ${form.transport === value ? 'radio-selected' : ''}`} key={value}>
-                      <input type="radio" name="transport" value={value} checked={form.transport === value} onChange={() => update('transport', value)} />
+                    <label
+                      className={`radio-option ${form.transport === value ? "radio-selected" : ""}`}
+                      key={value}
+                    >
+                      <input
+                        type="radio"
+                        name="transport"
+                        value={value}
+                        checked={form.transport === value}
+                        onChange={() => update("transport", value)}
+                      />
                       <span className="radio-circle" />
                       <span>{label}</span>
                     </label>
@@ -898,123 +1136,280 @@ function RequestForm({ onSubmit, requests, onNavigate }) {
                 </div>
               </Field>
               <Field label="Soporte de O2" required error={errors.oxygen}>
-                <Dropdown value={form.oxygen} options={['si', 'no']} placeholder="elegir" onChange={(value) => update('oxygen', value)} />
+                <Dropdown
+                  value={form.oxygen}
+                  options={["si", "no"]}
+                  placeholder="elegir"
+                  onChange={(value) => update("oxygen", value)}
+                />
               </Field>
               <Field label="Observaciones">
-                <input aria-label="Observaciones" value={form.observation} onChange={(e) => update('observation', e.target.value)} placeholder="observaciones adicionales (opcional)" />
+                <input
+                  aria-label="Observaciones"
+                  value={form.observation}
+                  onChange={(e) => update("observation", e.target.value)}
+                  placeholder="observaciones adicionales (opcional)"
+                />
               </Field>
             </div>
           </div>
         </div>
 
         <div className="compact-actions photo-actions">
-          <button className="clear-button" type="button" onClick={handleClear}>Limpiar formulario</button>
-          <button className="submit-button photo-submit" type="submit">Enviar solicitud</button>
+          <button className="clear-button" type="button" onClick={handleClear}>
+            Limpiar formulario
+          </button>
+          <button className="submit-button photo-submit" type="submit">
+            Enviar solicitud
+          </button>
         </div>
+        {showClearConfirm && (
+          <div className="confirm-overlay">
+            <div className="confirm-box">
+              <p>¿Seguro que quieres borrar todo el formulario?</p>
+              <div className="confirm-buttons">
+                <button
+                  type="button"
+                  className="confirm-cancel"
+                  onClick={() => setShowClearConfirm(false)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="confirm-accept"
+                  onClick={confirmClear}
+                >
+                  Sí, borrar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {showClearConfirm && (
+  <div className="confirm-overlay">
+    <div className="confirm-box">
+      <p>¿Seguro que quieres borrar todo el formulario?</p>
+      <div className="confirm-buttons">
+        <button
+          type="button"
+          className="confirm-cancel"
+          onClick={() => setShowClearConfirm(false)}
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          className="confirm-accept"
+          onClick={confirmClear}
+        >
+          Sí, borrar
+        </button>
+      </div>
+    </div>
+  </div>
+)}
       </form>
     </section>
-  )
+  );
 }
 
 function Field({ label, required, error, children }) {
-  return <div className={`field-card ${error ? 'has-error' : ''}`}><label className="field-label">{label} {required && <span className="asterisk">*</span>}</label>{children}{error && <div className="field-error"><span className="error-icon">!</span>{error}</div>}</div>
+  return (
+    <div className={`field-card ${error ? "has-error" : ""}`}>
+      <label className="field-label">
+        {label} {required && <span className="asterisk">*</span>}
+      </label>
+      {children}
+      {error && (
+        <div className="field-error">
+          <span className="error-icon">!</span>
+          {error}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function Dropdown({ value, options, placeholder, onChange }) {
-  const [open, setOpen] = useState(false)
-  const dropdownRef = useRef(null)
+  const [open, setOpen] = useState(false);
+  const dropdownRef = useRef(null);
   useEffect(() => {
-    const close = (event) => { if (dropdownRef.current && !dropdownRef.current.contains(event.target)) setOpen(false) }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [])
-  return <div className={`dropdown ${open ? 'is-open' : ''}`} ref={dropdownRef}><button type="button" className={`dropdown-trigger ${value ? 'has-value' : ''}`} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((current) => !current)}><span>{value || placeholder}</span><span className="chevron" aria-hidden="true" /></button>{open && <div className="dropdown-menu" role="listbox"><button type="button" className="dropdown-option placeholder-option" onClick={() => { onChange(''); setOpen(false) }}>{placeholder}</button>{options.map((option) => <button type="button" role="option" aria-selected={value === option} className={`dropdown-option ${value === option ? 'selected' : ''}`} key={option} onClick={() => { onChange(option); setOpen(false) }}>{option}</button>)}</div>}</div>
+    const close = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target))
+        setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+  return (
+    <div className={`dropdown ${open ? "is-open" : ""}`} ref={dropdownRef}>
+      <button
+        type="button"
+        className={`dropdown-trigger ${value ? "has-value" : ""}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>{value || placeholder}</span>
+        <span className="chevron" aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="dropdown-menu" role="listbox">
+          <button
+            type="button"
+            className="dropdown-option placeholder-option"
+            onClick={() => {
+              onChange("");
+              setOpen(false);
+            }}
+          >
+            {placeholder}
+          </button>
+          {options.map((option) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={value === option}
+              className={`dropdown-option ${value === option ? "selected" : ""}`}
+              key={option}
+              onClick={() => {
+                onChange(option);
+                setOpen(false);
+              }}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
-function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }) {
-  const [filter, setFilter] = useState('TODAS')
-  const [query, setQuery] = useState('')
-  const [service, setService] = useState('TODOS')
-  const [refreshState, setRefreshState] = useState('idle')
-  const [detailRequest, setDetailRequest] = useState(null)
-  const [editRequest, setEditRequest] = useState(null)
-  const [editError, setEditError] = useState('')
-  const [editDraft, setEditDraft] = useState({ status: 'PENDIENTE', mover: '', centralObservation: '' })
+function DashboardPage({
+  requests,
+  camilleros,
+  onUpdate,
+  onRefresh,
+  onNavigate,
+}) {
+  const [filter, setFilter] = useState("TODAS");
+  const [query, setQuery] = useState("");
+  const [service, setService] = useState("TODOS");
+  const [refreshState, setRefreshState] = useState("idle");
+  const [detailRequest, setDetailRequest] = useState(null);
+  const [editRequest, setEditRequest] = useState(null);
+  const [editError, setEditError] = useState("");
+  const [editDraft, setEditDraft] = useState({
+    status: "PENDIENTE",
+    mover: "",
+    centralObservation: "",
+  });
 
   // Solo traslados PENDIENTES en la Central de Camilleros (Realizados y No Realizados van al Historial)
   const activeRequests = useMemo(() => {
-    return requests.filter((r) => String(r.status || '').toUpperCase() === 'PENDIENTE')
-  }, [requests])
+    return requests.filter(
+      (r) => String(r.status || "").toUpperCase() === "PENDIENTE",
+    );
+  }, [requests]);
 
-  const pendingCount = activeRequests.length
+  const pendingCount = activeRequests.length;
 
   const visibleRequests = useMemo(() => {
     return activeRequests.filter((request) => {
-      const matchesService = service === 'TODOS' || request.service === service
+      const matchesService = service === "TODOS" || request.service === service;
       const matchesQuery =
         !query ||
-        [request.patient, request.record, request.location, request.destination, request.observation, request.mover, request.centralObservation]
-          .some((val) => val && val.toLowerCase().includes(query.toLowerCase()))
-      return matchesService && matchesQuery
-    })
-  }, [activeRequests, service, query])
+        [
+          request.patient,
+          request.record,
+          request.location,
+          request.destination,
+          request.observation,
+          request.mover,
+          request.centralObservation,
+        ].some((val) => val && val.toLowerCase().includes(query.toLowerCase()));
+      return matchesService && matchesQuery;
+    });
+  }, [activeRequests, service, query]);
 
   const triggerRefresh = () => {
-    setRefreshState('refreshing')
-    if (onRefresh) onRefresh(false)
+    setRefreshState("refreshing");
+    if (onRefresh) onRefresh(false);
     setTimeout(() => {
-      setRefreshState('success')
-      setTimeout(() => setRefreshState('idle'), 1000)
-    }, 300)
-  }
+      setRefreshState("success");
+      setTimeout(() => setRefreshState("idle"), 1000);
+    }, 300);
+  };
 
   const handleOpenEdit = (request) => {
-    setEditError('')
-    setEditRequest(request)
+    setEditError("");
+    setEditRequest(request);
     setEditDraft({
-      status: request.status || 'PENDIENTE',
-      mover: request.mover && request.mover !== 'sin asignar' && request.mover !== 'Sin asignar' ? request.mover : '',
-      centralObservation: request.centralObservation || '',
-    })
-  }
+      status: request.status || "PENDIENTE",
+      mover:
+        request.mover &&
+        request.mover !== "sin asignar" &&
+        request.mover !== "Sin asignar"
+          ? request.mover
+          : "",
+      centralObservation: request.centralObservation || "",
+    });
+  };
 
   const handleSaveEdit = () => {
-    if (!editRequest) return
+    if (!editRequest) return;
 
-    const moverClean = (editDraft.mover || '').trim()
-    if (!moverClean || moverClean.toLowerCase() === 'sin asignar') {
-      setEditError('Es obligatorio seleccionar un camillero de la lista.')
-      return
+    const moverClean = (editDraft.mover || "").trim();
+    if (!moverClean || moverClean.toLowerCase() === "sin asignar") {
+      setEditError("Es obligatorio seleccionar un camillero de la lista.");
+      return;
     }
 
-    if (String(editDraft.status || '').toUpperCase() === 'NO REALIZADO') {
-      if (!editDraft.centralObservation || !editDraft.centralObservation.trim()) {
-        setEditError('Es obligatorio ingresar la observación o motivo por el cual no se realizó el traslado.')
-        return
+    if (String(editDraft.status || "").toUpperCase() === "NO REALIZADO") {
+      if (
+        !editDraft.centralObservation ||
+        !editDraft.centralObservation.trim()
+      ) {
+        setEditError(
+          "Es obligatorio ingresar la observación o motivo por el cual no se realizó el traslado.",
+        );
+        return;
       }
     }
-    setEditError('')
+    setEditError("");
 
-    let updatedMovementTime = editRequest.movementTime || 'Pendiente'
-    let updatedAssignmentTime = editRequest.assignmentTime || null
+    let updatedMovementTime = editRequest.movementTime || "Pendiente";
+    let updatedAssignmentTime = editRequest.assignmentTime || null;
 
-    if (moverClean && moverClean.toLowerCase() !== 'sin asignar' && !updatedAssignmentTime) {
-      updatedAssignmentTime = new Date().toLocaleString('es-CO')
+    if (
+      moverClean &&
+      moverClean.toLowerCase() !== "sin asignar" &&
+      !updatedAssignmentTime
+    ) {
+      updatedAssignmentTime = new Date().toLocaleString("es-CO");
     }
 
-    if (editDraft.status === 'REALIZADO') {
+    if (editDraft.status === "REALIZADO") {
       updatedMovementTime =
-        editRequest.movementTime && editRequest.movementTime !== 'Pendiente' && editRequest.movementTime !== 'pendiente'
+        editRequest.movementTime &&
+        editRequest.movementTime !== "Pendiente" &&
+        editRequest.movementTime !== "pendiente"
           ? editRequest.movementTime
-          : new Date().toLocaleString('es-CO')
+          : new Date().toLocaleString("es-CO");
       if (!updatedAssignmentTime) {
-        updatedAssignmentTime = updatedMovementTime
+        updatedAssignmentTime = updatedMovementTime;
       }
     }
 
-    if (editDraft.status === 'NO REALIZADO') {
-      if (!updatedMovementTime || updatedMovementTime === 'Pendiente' || updatedMovementTime === 'pendiente') {
-        updatedMovementTime = new Date().toLocaleString('es-CO')
+    if (editDraft.status === "NO REALIZADO") {
+      if (
+        !updatedMovementTime ||
+        updatedMovementTime === "Pendiente" ||
+        updatedMovementTime === "pendiente"
+      ) {
+        updatedMovementTime = new Date().toLocaleString("es-CO");
       }
     }
 
@@ -1027,24 +1422,24 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
           centralObservation: editDraft.centralObservation.trim(),
           movementTime: updatedMovementTime,
           assignmentTime: updatedAssignmentTime,
-        }
+        };
       }
-      return item
-    })
+      return item;
+    });
 
-    const editedItem = updated.find((r) => r.id === editRequest.id)
-    onUpdate(updated, editedItem)
-    setEditRequest(null)
-  }
+    const editedItem = updated.find((r) => r.id === editRequest.id);
+    onUpdate(updated, editedItem);
+    setEditRequest(null);
+  };
 
   // Regla: si el traslado está en REALIZADO o NO REALIZADO y ya tiene camillero asignado, no se puede cambiar el camillero
   const isMoverLocked = Boolean(
     editRequest &&
-    (editDraft.status === 'REALIZADO' || editDraft.status === 'NO REALIZADO') &&
+    (editDraft.status === "REALIZADO" || editDraft.status === "NO REALIZADO") &&
     editRequest.mover &&
-    editRequest.mover !== 'sin asignar' &&
-    editRequest.mover !== 'Sin asignar'
-  )
+    editRequest.mover !== "sin asignar" &&
+    editRequest.mover !== "Sin asignar",
+  );
 
   return (
     <section className="dashboard-page" aria-labelledby="dashboard-title">
@@ -1052,28 +1447,51 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
         <div className="banner-text">
           <p className="eyebrow">CENTRAL DE TRASLADOS</p>
           <h1 id="dashboard-title">Central de camilleros</h1>
-          <p className="dashboard-subtitle">Consulta y gestiona las solicitudes de traslado activas de la institución.</p>
+          <p className="dashboard-subtitle">
+            Consulta y gestiona las solicitudes de traslado activas de la
+            institución.
+          </p>
         </div>
         <div className="banner-right">
-          <img className="banner-logo" src="/logooo-Photoroom.png" alt="Clínica Nueva de Cali" />
+          <img
+            className="banner-logo"
+            src="/logooo-Photoroom.png"
+            alt="Clínica Nueva de Cali"
+          />
         </div>
       </header>
       <div className="dashboard-stats">
-        <div className="pending-stat"><span>Solicitudes Pendientes Activas</span><strong>{pendingCount}</strong></div>
+        <div className="pending-stat">
+          <span>Solicitudes Pendientes Activas</span>
+          <strong>{pendingCount}</strong>
+        </div>
       </div>
       <div className="dashboard-toolbar">
         <label className="search-box">
           <span aria-hidden="true">⌕</span>
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar paciente, registro u observación" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Buscar paciente, registro u observación"
+          />
         </label>
         <label className="filter-select">
           <span>Servicio</span>
           <select value={service} onChange={(e) => setService(e.target.value)}>
             <option value="TODOS">Todos los servicios</option>
-            {services.map((item) => <option key={item} value={item}>{item}</option>)}
+            {services.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
           </select>
         </label>
-        <button type="button" className="analytics-link-btn history-nav-btn" onClick={() => onNavigate('history')} title="Ver historial de traslados">
+        <button
+          type="button"
+          className="analytics-link-btn history-nav-btn"
+          onClick={() => onNavigate("history")}
+          title="Ver historial de traslados"
+        >
           Historial
         </button>
       </div>
@@ -1090,17 +1508,22 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
               onClick={triggerRefresh}
               title="Actualizar lista de solicitudes"
             >
-              <span className="refresh-icon" aria-hidden="true">↻</span>
+              <span className="refresh-icon" aria-hidden="true">
+                ↻
+              </span>
               <span>
-                {refreshState === 'refreshing'
-                  ? 'Actualizando...'
-                  : refreshState === 'success'
-                  ? '¡Actualizado!'
-                  : 'Actualizar'}
+                {refreshState === "refreshing"
+                  ? "Actualizando..."
+                  : refreshState === "success"
+                    ? "¡Actualizado!"
+                    : "Actualizar"}
               </span>
             </button>
           </div>
-          <span className="table-hint">Usa "Editar" para asignar camillero, cambiar estado y agregar observaciones</span>
+          <span className="table-hint">
+            Usa "Editar" para asignar camillero, cambiar estado y agregar
+            observaciones
+          </span>
         </div>
         <div className="table-scroll">
           <table className="compact-movement-table">
@@ -1117,26 +1540,45 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
             </thead>
             <tbody>
               {visibleRequests.map((request) => (
-                <tr key={request.id} className={request.status === 'PENDIENTE' ? 'pending-row' : ''}>
-                  <td><strong>{request.patient}</strong></td>
-                  <td>{request.service || '—'}</td>
+                <tr
+                  key={request.id}
+                  className={
+                    request.status === "PENDIENTE" ? "pending-row" : ""
+                  }
+                >
+                  <td>
+                    <strong>{request.patient}</strong>
+                  </td>
+                  <td>{request.service || "—"}</td>
                   <td>{request.location}</td>
                   <td>{request.destination}</td>
                   <td>
-                    <span className={`priority-badge priority-${(request.priority || 'media').toLowerCase()}`}>
-                      {(request.priority || 'media').toUpperCase()}
+                    <span
+                      className={`priority-badge priority-${(request.priority || "media").toLowerCase()}`}
+                    >
+                      {(request.priority || "media").toUpperCase()}
                     </span>
                   </td>
                   <td>
-                    <span className={`badge-pill ${request.status === 'PENDIENTE' ? 'pill-purple' : request.status === 'NO REALIZADO' ? 'pill-orange' : 'pill-green'}`}>
+                    <span
+                      className={`badge-pill ${request.status === "PENDIENTE" ? "pill-purple" : request.status === "NO REALIZADO" ? "pill-orange" : "pill-green"}`}
+                    >
                       {request.status}
                     </span>
                   </td>
                   <td className="row-actions">
-                    <button className="details-button" type="button" onClick={() => setDetailRequest(request)}>
+                    <button
+                      className="details-button"
+                      type="button"
+                      onClick={() => setDetailRequest(request)}
+                    >
                       Detalles
                     </button>
-                    <button className="edit-button" type="button" onClick={() => handleOpenEdit(request)}>
+                    <button
+                      className="edit-button"
+                      type="button"
+                      onClick={() => handleOpenEdit(request)}
+                    >
                       Editar
                     </button>
                   </td>
@@ -1144,7 +1586,9 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
               ))}
               {!visibleRequests.length && (
                 <tr>
-                  <td colSpan={7} className="empty-state">No hay traslados activos con estos filtros.</td>
+                  <td colSpan={7} className="empty-state">
+                    No hay traslados activos con estos filtros.
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -1158,29 +1602,110 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <header className="modal-header">
               <h2>Detalles de la Solicitud</h2>
-              <button type="button" className="close-modal-btn" onClick={() => setDetailRequest(null)}>✕</button>
+              <button
+                type="button"
+                className="close-modal-btn"
+                onClick={() => setDetailRequest(null)}
+              >
+                ✕
+              </button>
             </header>
             <div className="modal-grid">
-              <div className="detail-item"><span>ID de Solicitud</span><strong className="id-highlight">{detailRequest.requestId || 'TR-1000'}</strong></div>
-              <div className="detail-item"><span>Marca temporal</span><strong>{detailRequest.timestamp}</strong></div>
-              <div className="detail-item"><span>Hora tomada / asignada</span><strong>{detailRequest.assignmentTime || 'Pendiente'}</strong></div>
-              <div className="detail-item"><span>Oportunidad de Servicio</span><strong>{detailRequest.status === 'REALIZADO' ? detailRequest.movementTime : 'Pendiente'}</strong></div>
-              <div className="detail-item"><span>Prioridad</span><strong className={`priority-badge priority-${(detailRequest.priority || 'media').toLowerCase()}`}>{(detailRequest.priority || 'media').toUpperCase()}</strong></div>
-              <div className="detail-item"><span>Nombre de paciente</span><strong>{detailRequest.patient}</strong></div>
-              <div className="detail-item"><span>Registro</span><strong>{detailRequest.record}</strong></div>
-              <div className="detail-item"><span>Servicio que solicita</span><strong>{detailRequest.service}</strong></div>
-              <div className="detail-item"><span>Ubicación específica</span><strong>{detailRequest.location}</strong></div>
-              <div className="detail-item"><span>Destino</span><strong>{detailRequest.destination}</strong></div>
-              <div className="detail-item"><span>Medio de transporte</span><strong>{detailRequest.transport}</strong></div>
-              <div className="detail-item"><span>Soporte de O2</span><strong>{detailRequest.oxygen}</strong></div>
-              <div className="detail-item"><span>Aislamiento</span><strong>{detailRequest.isolation || '—'}</strong></div> 
-              <div className="detail-item full-width"><span>Observaciones solicitud</span><strong>{detailRequest.observation || 'Sin observaciones'}</strong></div>
-              <div className="detail-item"><span>Confirmación de movimiento</span><strong className={`status-badge-tag ${detailRequest.status.toLowerCase().replaceAll(' ', '-')}`}>{detailRequest.status}</strong></div>
-              <div className="detail-item"><span>Camillero que realiza</span><strong>{detailRequest.mover}</strong></div>
-              <div className="detail-item full-width"><span>Observación camilleros</span><strong>{detailRequest.centralObservation || 'Sin observación'}</strong></div>
+              <div className="detail-item">
+                <span>ID de Solicitud</span>
+                <strong className="id-highlight">
+                  {detailRequest.requestId || "TR-1000"}
+                </strong>
+              </div>
+              <div className="detail-item">
+                <span>Marca temporal</span>
+                <strong>{detailRequest.timestamp}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Hora tomada / asignada</span>
+                <strong>{detailRequest.assignmentTime || "Pendiente"}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Oportunidad de Servicio</span>
+                <strong>
+                  {detailRequest.status === "REALIZADO"
+                    ? detailRequest.movementTime
+                    : "Pendiente"}
+                </strong>
+              </div>
+              <div className="detail-item">
+                <span>Prioridad</span>
+                <strong
+                  className={`priority-badge priority-${(detailRequest.priority || "media").toLowerCase()}`}
+                >
+                  {(detailRequest.priority || "media").toUpperCase()}
+                </strong>
+              </div>
+              <div className="detail-item">
+                <span>Nombre de paciente</span>
+                <strong>{detailRequest.patient}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Registro</span>
+                <strong>{detailRequest.record}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Servicio que solicita</span>
+                <strong>{detailRequest.service}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Ubicación específica</span>
+                <strong>{detailRequest.location}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Destino</span>
+                <strong>{detailRequest.destination}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Medio de transporte</span>
+                <strong>{detailRequest.transport}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Soporte de O2</span>
+                <strong>{detailRequest.oxygen}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Aislamiento</span>
+                <strong>{detailRequest.isolation || "—"}</strong>
+              </div>
+              <div className="detail-item full-width">
+                <span>Observaciones solicitud</span>
+                <strong>
+                  {detailRequest.observation || "Sin observaciones"}
+                </strong>
+              </div>
+              <div className="detail-item">
+                <span>Confirmación de movimiento</span>
+                <strong
+                  className={`status-badge-tag ${detailRequest.status.toLowerCase().replaceAll(" ", "-")}`}
+                >
+                  {detailRequest.status}
+                </strong>
+              </div>
+              <div className="detail-item">
+                <span>Camillero que realiza</span>
+                <strong>{detailRequest.mover}</strong>
+              </div>
+              <div className="detail-item full-width">
+                <span>Observación camilleros</span>
+                <strong>
+                  {detailRequest.centralObservation || "Sin observación"}
+                </strong>
+              </div>
             </div>
             <footer className="modal-footer">
-              <button className="submit-button" type="button" onClick={() => setDetailRequest(null)}>Cerrar</button>
+              <button
+                className="submit-button"
+                type="button"
+                onClick={() => setDetailRequest(null)}
+              >
+                Cerrar
+              </button>
             </footer>
           </div>
         </div>
@@ -1189,21 +1714,34 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
       {/* MODAL EDITAR */}
       {editRequest && (
         <div className="modal-overlay" onClick={() => setEditRequest(null)}>
-          <div className="modal-card edit-modal-card" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="modal-card edit-modal-card"
+            onClick={(e) => e.stopPropagation()}
+          >
             <header className="modal-header">
               <h2>Editar Gestión de Traslado</h2>
-              <button type="button" className="close-modal-btn" onClick={() => setEditRequest(null)}>✕</button>
+              <button
+                type="button"
+                className="close-modal-btn"
+                onClick={() => setEditRequest(null)}
+              >
+                ✕
+              </button>
             </header>
-            
+
             <div className="edit-modal-summary-banner">
               <div className="summary-item">
                 <span>ID de Solicitud</span>
-                <strong className="id-highlight">{editRequest.requestId || 'TR-1000'}</strong>
+                <strong className="id-highlight">
+                  {editRequest.requestId || "TR-1000"}
+                </strong>
               </div>
               <div className="summary-item">
                 <span>Prioridad</span>
-                <strong className={`priority-badge priority-${(editRequest.priority || 'media').toLowerCase()}`}>
-                  {(editRequest.priority || 'media').toUpperCase()}
+                <strong
+                  className={`priority-badge priority-${(editRequest.priority || "media").toLowerCase()}`}
+                >
+                  {(editRequest.priority || "media").toUpperCase()}
                 </strong>
               </div>
               <div className="summary-item">
@@ -1212,7 +1750,7 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
               </div>
               <div className="summary-item">
                 <span>Servicio</span>
-                <strong>{editRequest.service || '—'}</strong>
+                <strong>{editRequest.service || "—"}</strong>
               </div>
               <div className="summary-item">
                 <span>Ubicación</span>
@@ -1226,24 +1764,35 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
 
             <div className="edit-modal-form-body">
               <div className="edit-form-field">
-                <label className="edit-field-label">Confirmación de movimiento (Estado)</label>
+                <label className="edit-field-label">
+                  Confirmación de movimiento (Estado)
+                </label>
                 <select
                   className="edit-modal-select"
                   value={editDraft.status}
                   onChange={(e) => {
-                    setEditDraft({ ...editDraft, status: e.target.value })
-                    if (e.target.value !== 'NO REALIZADO') setEditError('')
+                    setEditDraft({ ...editDraft, status: e.target.value });
+                    if (e.target.value !== "NO REALIZADO") setEditError("");
                   }}
                 >
-                  <option value="PENDIENTE">PENDIENTE (Permanece en Central)</option>
-                  <option value="REALIZADO">REALIZADO (Pasa al historial)</option>
-                  <option value="NO REALIZADO">NO REALIZADO (Pasa al historial)</option>
+                  <option value="PENDIENTE">
+                    PENDIENTE (Permanece en Central)
+                  </option>
+                  <option value="REALIZADO">
+                    REALIZADO (Pasa al historial)
+                  </option>
+                  <option value="NO REALIZADO">
+                    NO REALIZADO (Pasa al historial)
+                  </option>
                 </select>
               </div>
 
               <div className="edit-form-field">
                 <label className="edit-field-label">
-                  Camillero que realiza <span style={{ color: '#ef4444', fontWeight: 'bold' }}>* (Obligatorio)</span>
+                  Camillero que realiza{" "}
+                  <span style={{ color: "#ef4444", fontWeight: "bold" }}>
+                    * (Obligatorio)
+                  </span>
                 </label>
                 {isMoverLocked ? (
                   <div className="locked-field-box">
@@ -1254,20 +1803,26 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
                       disabled
                       readOnly
                     />
-                    <span className="lock-notice">🔒 Camillero no modificable en estado {editDraft.status}</span>
+                    <span className="lock-notice">
+                      🔒 Camillero no modificable en estado {editDraft.status}
+                    </span>
                   </div>
                 ) : (
                   <select
-                    className={`edit-modal-select ${editError && (!editDraft.mover || editDraft.mover === 'sin asignar') ? 'has-error-border' : ''}`}
+                    className={`edit-modal-select ${editError && (!editDraft.mover || editDraft.mover === "sin asignar") ? "has-error-border" : ""}`}
                     value={editDraft.mover}
                     onChange={(e) => {
-                      setEditDraft({ ...editDraft, mover: e.target.value })
-                      if (e.target.value) setEditError('')
+                      setEditDraft({ ...editDraft, mover: e.target.value });
+                      if (e.target.value) setEditError("");
                     }}
                   >
-                    <option value="">-- Selecciona un camillero de la lista * --</option>
+                    <option value="">
+                      -- Selecciona un camillero de la lista * --
+                    </option>
                     {(camilleros || []).map((name) => (
-                      <option key={name} value={name}>{name}</option>
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
                     ))}
                   </select>
                 )}
@@ -1275,20 +1830,40 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
 
               <div className="edit-form-field">
                 <label className="edit-field-label">
-                  Observación camilleros {editDraft.status === 'NO REALIZADO' && <span style={{ color: '#ef4444', fontWeight: 'bold' }}>* (Obligatorio)</span>}
+                  Observación camilleros{" "}
+                  {editDraft.status === "NO REALIZADO" && (
+                    <span style={{ color: "#ef4444", fontWeight: "bold" }}>
+                      * (Obligatorio)
+                    </span>
+                  )}
                 </label>
                 <textarea
-                  className={`edit-modal-textarea ${editError ? 'has-error-border' : ''}`}
+                  className={`edit-modal-textarea ${editError ? "has-error-border" : ""}`}
                   rows={3}
                   value={editDraft.centralObservation}
                   onChange={(e) => {
-                    setEditDraft({ ...editDraft, centralObservation: e.target.value })
-                    if (e.target.value.trim()) setEditError('')
+                    setEditDraft({
+                      ...editDraft,
+                      centralObservation: e.target.value,
+                    });
+                    if (e.target.value.trim()) setEditError("");
                   }}
-                  placeholder={editDraft.status === 'NO REALIZADO' ? 'Especifique obligatoriamente el motivo por el cual no se realizó el traslado...' : 'Observaciones de la central o del camillero...'}
+                  placeholder={
+                    editDraft.status === "NO REALIZADO"
+                      ? "Especifique obligatoriamente el motivo por el cual no se realizó el traslado..."
+                      : "Observaciones de la central o del camillero..."
+                  }
                 />
                 {editError && (
-                  <div className="field-error" style={{ marginTop: '8px', color: '#ef4444', fontWeight: 600, fontSize: '0.88rem' }}>
+                  <div
+                    className="field-error"
+                    style={{
+                      marginTop: "8px",
+                      color: "#ef4444",
+                      fontWeight: 600,
+                      fontSize: "0.88rem",
+                    }}
+                  >
                     <span className="error-icon">!</span> {editError}
                   </div>
                 )}
@@ -1296,10 +1871,18 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
             </div>
 
             <footer className="modal-footer edit-modal-footer">
-              <button className="clear-button" type="button" onClick={() => setEditRequest(null)}>
+              <button
+                className="clear-button"
+                type="button"
+                onClick={() => setEditRequest(null)}
+              >
                 Cancelar
               </button>
-              <button className="submit-button" type="button" onClick={handleSaveEdit}>
+              <button
+                className="submit-button"
+                type="button"
+                onClick={handleSaveEdit}
+              >
                 Guardar cambios
               </button>
             </footer>
@@ -1307,36 +1890,46 @@ function DashboardPage({ requests, camilleros, onUpdate, onRefresh, onNavigate }
         </div>
       )}
     </section>
-  )
+  );
 }
 
-function TablePagination({ currentPage, totalItems, pageSize = 10, onPageChange }) {
-  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
-  if (totalItems === 0) return null
+function TablePagination({
+  currentPage,
+  totalItems,
+  pageSize = 10,
+  onPageChange,
+}) {
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  if (totalItems === 0) return null;
 
-  const startItem = (currentPage - 1) * pageSize + 1
-  const endItem = Math.min(currentPage * pageSize, totalItems)
+  const startItem = (currentPage - 1) * pageSize + 1;
+  const endItem = Math.min(currentPage * pageSize, totalItems);
 
   const getPageNumbers = () => {
-    const pages = []
+    const pages = [];
     if (totalPages <= 7) {
-      for (let i = 1; i <= totalPages; i++) pages.push(i)
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
     } else {
-      pages.push(1)
-      if (currentPage > 3) pages.push('...')
-      const start = Math.max(2, currentPage - 1)
-      const end = Math.min(totalPages - 1, currentPage + 1)
-      for (let i = start; i <= end; i++) pages.push(i)
-      if (currentPage < totalPages - 2) pages.push('...')
-      pages.push(totalPages)
+      pages.push(1);
+      if (currentPage > 3) pages.push("...");
+      const start = Math.max(2, currentPage - 1);
+      const end = Math.min(totalPages - 1, currentPage + 1);
+      for (let i = start; i <= end; i++) pages.push(i);
+      if (currentPage < totalPages - 2) pages.push("...");
+      pages.push(totalPages);
     }
-    return pages
-  }
+    return pages;
+  };
 
   return (
     <div className="table-pagination-footer">
       <div className="pagination-info">
-        Mostrando <strong>{startItem} - {endItem}</strong> de <strong>{totalItems}</strong> registros (Página <strong>{currentPage}</strong> de <strong>{totalPages}</strong>)
+        Mostrando{" "}
+        <strong>
+          {startItem} - {endItem}
+        </strong>{" "}
+        de <strong>{totalItems}</strong> registros (Página{" "}
+        <strong>{currentPage}</strong> de <strong>{totalPages}</strong>)
       </div>
       <div className="pagination-controls">
         <button
@@ -1349,20 +1942,22 @@ function TablePagination({ currentPage, totalItems, pageSize = 10, onPageChange 
           ← Anterior
         </button>
         <div className="pagination-pages-list">
-          {getPageNumbers().map((p, idx) => (
-            p === '...' ? (
-              <span key={`ellipsis-${idx}`} className="pagination-ellipsis">...</span>
+          {getPageNumbers().map((p, idx) =>
+            p === "..." ? (
+              <span key={`ellipsis-${idx}`} className="pagination-ellipsis">
+                ...
+              </span>
             ) : (
               <button
                 key={p}
                 type="button"
-                className={`pagination-page-number ${currentPage === p ? 'active' : ''}`}
+                className={`pagination-page-number ${currentPage === p ? "active" : ""}`}
                 onClick={() => onPageChange(p)}
               >
                 {p}
               </button>
-            )
-          ))}
+            ),
+          )}
         </div>
         <button
           type="button"
@@ -1375,84 +1970,88 @@ function TablePagination({ currentPage, totalItems, pageSize = 10, onPageChange 
         </button>
       </div>
     </div>
-  )
+  );
 }
 
-function DayFilterDropdown({ availableDays = [], selectedDays = [], onChange }) {
-  const [isOpen, setIsOpen] = useState(false)
-  const [rangeStart, setRangeStart] = useState('')
-  const [rangeEnd, setRangeEnd] = useState('')
-  const dropdownRef = useRef(null)
+function DayFilterDropdown({
+  availableDays = [],
+  selectedDays = [],
+  onChange,
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [rangeStart, setRangeStart] = useState("");
+  const [rangeEnd, setRangeEnd] = useState("");
+  const dropdownRef = useRef(null);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setIsOpen(false)
+        setIsOpen(false);
       }
-    }
+    };
     if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside)
+      document.addEventListener("mousedown", handleClickOutside);
     }
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [isOpen])
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isOpen]);
 
   const formatDayDisplay = (isoStr) => {
-    if (!isoStr) return ''
-    const parts = isoStr.split('-')
-    if (parts.length < 3) return isoStr
-    const d = parseCODate(`${parts[2]}/${parts[1]}/${parts[0]}`)
-    const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
-    const dayName = d ? dayNames[d.getDay()] : ''
-    return `${parts[2]}/${parts[1]}/${parts[0]} (${dayName})`
-  }
+    if (!isoStr) return "";
+    const parts = isoStr.split("-");
+    if (parts.length < 3) return isoStr;
+    const d = parseCODate(`${parts[2]}/${parts[1]}/${parts[0]}`);
+    const dayNames = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+    const dayName = d ? dayNames[d.getDay()] : "";
+    return `${parts[2]}/${parts[1]}/${parts[0]} (${dayName})`;
+  };
 
   const handleToggleDay = (iso) => {
     if (selectedDays.includes(iso)) {
-      onChange(selectedDays.filter((d) => d !== iso))
+      onChange(selectedDays.filter((d) => d !== iso));
     } else {
-      onChange([...selectedDays, iso])
+      onChange([...selectedDays, iso]);
     }
-  }
+  };
 
   const handleSelectOnly = (iso, e) => {
-    e?.stopPropagation()
-    onChange([iso])
-  }
+    e?.stopPropagation();
+    onChange([iso]);
+  };
 
   const handleSelectAll = () => {
-    onChange([])
-  }
+    onChange([]);
+  };
 
   const handleSelectToday = () => {
-    const today = getISODateString(new Date())
-    onChange([today])
-  }
+    const today = getISODateString(new Date());
+    onChange([today]);
+  };
 
   const handleSelectYesterday = () => {
-    const yest = new Date()
-    yest.setDate(yest.getDate() - 1)
-    onChange([getISODateString(yest)])
-  }
+    const yest = new Date();
+    yest.setDate(yest.getDate() - 1);
+    onChange([getISODateString(yest)]);
+  };
 
   const handleApplyRange = () => {
-    if (!rangeStart && !rangeEnd) return
-    const start = rangeStart || rangeEnd
-    const end = rangeEnd || rangeStart
-    const minD = start <= end ? start : end
-    const maxD = start <= end ? end : start
+    if (!rangeStart && !rangeEnd) return;
+    const start = rangeStart || rangeEnd;
+    const end = rangeEnd || rangeStart;
+    const minD = start <= end ? start : end;
+    const maxD = start <= end ? end : start;
     const matched = availableDays
       .map((d) => d.iso)
-      .filter((iso) => iso >= minD && iso <= maxD)
-    onChange(matched.length > 0 ? matched : [minD])
-  }
+      .filter((iso) => iso >= minD && iso <= maxD);
+    onChange(matched.length > 0 ? matched : [minD]);
+  };
 
-  let buttonLabel = 'Todos los días'
+  let buttonLabel = "Todos los días";
   if (selectedDays.length === 1) {
-    buttonLabel = formatDayDisplay(selectedDays[0])
+    buttonLabel = formatDayDisplay(selectedDays[0]);
   } else if (selectedDays.length > 1) {
-    buttonLabel = `${selectedDays.length} días seleccionados`
+    buttonLabel = `${selectedDays.length} días seleccionados`;
   }
 
   return (
@@ -1460,12 +2059,12 @@ function DayFilterDropdown({ availableDays = [], selectedDays = [], onChange }) 
       <span className="filter-item-title">Día(s)</span>
       <button
         type="button"
-        className={`day-filter-trigger-btn ${selectedDays.length > 0 ? 'has-selection' : ''}`}
+        className={`day-filter-trigger-btn ${selectedDays.length > 0 ? "has-selection" : ""}`}
         onClick={() => setIsOpen(!isOpen)}
         title="Filtrar por uno o varios días"
       >
         <span className="day-filter-btn-text">{buttonLabel}</span>
-        <span className="day-filter-arrow">{isOpen ? '▲' : '▼'}</span>
+        <span className="day-filter-arrow">{isOpen ? "▲" : "▼"}</span>
       </button>
 
       {isOpen && (
@@ -1473,7 +2072,7 @@ function DayFilterDropdown({ availableDays = [], selectedDays = [], onChange }) 
           <div className="day-filter-presets">
             <button
               type="button"
-              className={`preset-chip-btn ${selectedDays.length === 0 ? 'active' : ''}`}
+              className={`preset-chip-btn ${selectedDays.length === 0 ? "active" : ""}`}
               onClick={handleSelectAll}
             >
               Todos los días
@@ -1525,7 +2124,11 @@ function DayFilterDropdown({ availableDays = [], selectedDays = [], onChange }) 
           <div className="day-filter-list-header">
             <span>Seleccionar días:</span>
             {selectedDays.length > 0 && (
-              <button type="button" className="clear-days-link" onClick={handleSelectAll}>
+              <button
+                type="button"
+                className="clear-days-link"
+                onClick={handleSelectAll}
+              >
                 Limpiar selección
               </button>
             )}
@@ -1533,14 +2136,17 @@ function DayFilterDropdown({ availableDays = [], selectedDays = [], onChange }) 
 
           <div className="day-filter-days-list">
             {availableDays.map(({ iso, count }) => {
-              const isChecked = selectedDays.includes(iso)
+              const isChecked = selectedDays.includes(iso);
               return (
                 <div
                   key={iso}
-                  className={`day-checkbox-item ${isChecked ? 'checked' : ''}`}
+                  className={`day-checkbox-item ${isChecked ? "checked" : ""}`}
                   onClick={() => handleToggleDay(iso)}
                 >
-                  <label className="day-checkbox-label" onClick={(e) => e.stopPropagation()}>
+                  <label
+                    className="day-checkbox-label"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <input
                       type="checkbox"
                       checked={isChecked}
@@ -1560,17 +2166,19 @@ function DayFilterDropdown({ availableDays = [], selectedDays = [], onChange }) 
                     </button>
                   </div>
                 </div>
-              )
+              );
             })}
             {availableDays.length === 0 && (
-              <div className="empty-days-notice">No hay registros con fecha válida.</div>
+              <div className="empty-days-notice">
+                No hay registros con fecha válida.
+              </div>
             )}
           </div>
 
           <div className="day-filter-footer">
             <span className="selected-summary-text">
               {selectedDays.length === 0
-                ? 'Mostrando todos los días'
+                ? "Mostrando todos los días"
                 : `${selectedDays.length} día(s) seleccionado(s)`}
             </span>
             <button
@@ -1584,149 +2192,227 @@ function DayFilterDropdown({ availableDays = [], selectedDays = [], onChange }) 
         </div>
       )}
     </div>
-  )
+  );
 }
 
 function HistoryPage({ requests, onRefresh, onNavigate }) {
-  const [query, setQuery] = useState('')
-  const [selectedStatus, setSelectedStatus] = useState('TODOS')
-  const [selectedDays, setSelectedDays] = useState([])
-  const [selectedService, setSelectedService] = useState('TODOS')
-  const [selectedMover, setSelectedMover] = useState('TODOS')
-  const [selectedPriority, setSelectedPriority] = useState('TODOS')
-  const [selectedTransport, setSelectedTransport] = useState('TODOS')
-  const [selectedOxygen, setSelectedOxygen] = useState('TODOS')
-  const [currentPage, setCurrentPage] = useState(1)
-  const [refreshState, setRefreshState] = useState('idle')
-  const [detailRequest, setDetailRequest] = useState(null)
+  const [query, setQuery] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState("TODOS");
+  const [selectedDays, setSelectedDays] = useState([]);
+  const [selectedService, setSelectedService] = useState("TODOS");
+  const [selectedMover, setSelectedMover] = useState("TODOS");
+  const [selectedPriority, setSelectedPriority] = useState("TODOS");
+  const [selectedTransport, setSelectedTransport] = useState("TODOS");
+  const [selectedOxygen, setSelectedOxygen] = useState("TODOS");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [refreshState, setRefreshState] = useState("idle");
+  const [detailRequest, setDetailRequest] = useState(null);
 
   useEffect(() => {
-    setCurrentPage(1)
-  }, [query, selectedStatus, selectedDays, selectedService, selectedMover, selectedPriority, selectedTransport, selectedOxygen])
+    setCurrentPage(1);
+  }, [
+    query,
+    selectedStatus,
+    selectedDays,
+    selectedService,
+    selectedMover,
+    selectedPriority,
+    selectedTransport,
+    selectedOxygen,
+  ]);
 
   const availableDays = useMemo(() => {
-    const map = {}
+    const map = {};
     for (const req of requests) {
-      const iso = getTimestampISODate(req.timestamp)
+      const iso = getTimestampISODate(req.timestamp);
       if (iso) {
-        map[iso] = (map[iso] || 0) + 1
+        map[iso] = (map[iso] || 0) + 1;
       }
     }
     return Object.entries(map)
       .sort((a, b) => b[0].localeCompare(a[0]))
-      .map(([iso, count]) => ({ iso, count }))
-  }, [requests])
+      .map(([iso, count]) => ({ iso, count }));
+  }, [requests]);
 
   const availableServices = useMemo(() => {
-    const set = new Set()
+    const set = new Set();
     for (const req of requests) {
-      if (req.service) set.add(req.service)
+      if (req.service) set.add(req.service);
     }
-    return Array.from(set).sort()
-  }, [requests])
+    return Array.from(set).sort();
+  }, [requests]);
 
   const availableMovers = useMemo(() => {
-    const set = new Set()
+    const set = new Set();
     for (const req of requests) {
-      if (req.mover && req.mover !== 'sin asignar' && req.mover !== 'Sin asignar') {
-        set.add(req.mover)
+      if (
+        req.mover &&
+        req.mover !== "sin asignar" &&
+        req.mover !== "Sin asignar"
+      ) {
+        set.add(req.mover);
       }
     }
-    return Array.from(set).sort()
-  }, [requests])
+    return Array.from(set).sort();
+  }, [requests]);
 
   const historyRequests = useMemo(() => {
     return requests.filter((r) => {
-      const st = String(r.status || '').toUpperCase()
-      return st === 'REALIZADO' || st === 'NO REALIZADO'
-    })
-  }, [requests])
+      const st = String(r.status || "").toUpperCase();
+      return st === "REALIZADO" || st === "NO REALIZADO";
+    });
+  }, [requests]);
 
   const filteredRequests = useMemo(() => {
     return historyRequests.filter((req) => {
-      if (selectedStatus !== 'TODOS') {
-        if (String(req.status || '').toUpperCase() !== selectedStatus.toUpperCase()) return false
+      if (selectedStatus !== "TODOS") {
+        if (
+          String(req.status || "").toUpperCase() !==
+          selectedStatus.toUpperCase()
+        )
+          return false;
       }
 
       if (selectedDays.length > 0) {
-        const reqDateStr = getTimestampISODate(req.timestamp)
-        if (!reqDateStr || !selectedDays.includes(reqDateStr)) return false
+        const reqDateStr = getTimestampISODate(req.timestamp);
+        if (!reqDateStr || !selectedDays.includes(reqDateStr)) return false;
       }
 
-      if (selectedService !== 'TODOS' && (req.service || '').toLowerCase() !== selectedService.toLowerCase()) return false
-      if (selectedMover !== 'TODOS' && (req.mover || '').toLowerCase() !== selectedMover.toLowerCase()) return false
-      if (selectedPriority !== 'TODOS' && (req.priority || 'media').toLowerCase() !== selectedPriority.toLowerCase()) return false
-      if (selectedTransport !== 'TODOS' && (req.transport || '').toLowerCase() !== selectedTransport.toLowerCase()) return false
-      if (selectedOxygen !== 'TODOS' && (req.oxygen || '').toLowerCase() !== selectedOxygen.toLowerCase()) return false
+      if (
+        selectedService !== "TODOS" &&
+        (req.service || "").toLowerCase() !== selectedService.toLowerCase()
+      )
+        return false;
+      if (
+        selectedMover !== "TODOS" &&
+        (req.mover || "").toLowerCase() !== selectedMover.toLowerCase()
+      )
+        return false;
+      if (
+        selectedPriority !== "TODOS" &&
+        (req.priority || "media").toLowerCase() !==
+          selectedPriority.toLowerCase()
+      )
+        return false;
+      if (
+        selectedTransport !== "TODOS" &&
+        (req.transport || "").toLowerCase() !== selectedTransport.toLowerCase()
+      )
+        return false;
+      if (
+        selectedOxygen !== "TODOS" &&
+        (req.oxygen || "").toLowerCase() !== selectedOxygen.toLowerCase()
+      )
+        return false;
 
       if (query.trim()) {
-        const q = query.toLowerCase().trim()
-        const haystack = `${req.requestId || ''} ${req.patient || ''} ${req.record || ''} ${req.location || ''} ${req.destination || ''} ${req.service || ''} ${req.mover || ''} ${req.priority || ''} ${req.observation || ''} ${req.centralObservation || ''}`.toLowerCase()
-        if (!haystack.includes(q)) return false
+        const q = query.toLowerCase().trim();
+        const haystack =
+          `${req.requestId || ""} ${req.patient || ""} ${req.record || ""} ${req.location || ""} ${req.destination || ""} ${req.service || ""} ${req.mover || ""} ${req.priority || ""} ${req.observation || ""} ${req.centralObservation || ""}`.toLowerCase();
+        if (!haystack.includes(q)) return false;
       }
 
-      return true
-    })
-  }, [historyRequests, query, selectedStatus, selectedDays, selectedService, selectedMover, selectedPriority, selectedTransport, selectedOxygen])
+      return true;
+    });
+  }, [
+    historyRequests,
+    query,
+    selectedStatus,
+    selectedDays,
+    selectedService,
+    selectedMover,
+    selectedPriority,
+    selectedTransport,
+    selectedOxygen,
+  ]);
 
-  const totalCount = filteredRequests.length
-  const completedCount = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'REALIZADO').length
-  const notRealizedCount = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'NO REALIZADO').length
+  const totalCount = filteredRequests.length;
+  const completedCount = filteredRequests.filter(
+    (r) => String(r.status || "").toUpperCase() === "REALIZADO",
+  ).length;
+  const notRealizedCount = filteredRequests.filter(
+    (r) => String(r.status || "").toUpperCase() === "NO REALIZADO",
+  ).length;
 
   const paginatedRequests = useMemo(() => {
-    const start = (currentPage - 1) * 10
-    return filteredRequests.slice(start, start + 10)
-  }, [filteredRequests, currentPage])
+    const start = (currentPage - 1) * 10;
+    return filteredRequests.slice(start, start + 10);
+  }, [filteredRequests, currentPage]);
 
   const avgDuration = useMemo(() => {
-    let sum = 0, count = 0
+    let sum = 0,
+      count = 0;
     for (const req of filteredRequests) {
-      if (String(req.status || '').toUpperCase() === 'REALIZADO') {
-        const dur = calculateDurationMinutes(req.timestamp, req.movementTime)
+      if (String(req.status || "").toUpperCase() === "REALIZADO") {
+        const dur = calculateDurationMinutes(req.timestamp, req.movementTime);
         if (dur !== null) {
-          sum += dur
-          count++
+          sum += dur;
+          count++;
         }
       }
     }
-    return count > 0 ? Math.round(sum / count) : 0
-  }, [filteredRequests])
+    return count > 0 ? Math.round(sum / count) : 0;
+  }, [filteredRequests]);
 
   const triggerRefresh = () => {
-    setRefreshState('refreshing')
-    if (onRefresh) onRefresh(true)
+    setRefreshState("refreshing");
+    if (onRefresh) onRefresh(true);
     setTimeout(() => {
-      setRefreshState('success')
-      setTimeout(() => setRefreshState('idle'), 1000)
-    }, 300)
-  }
+      setRefreshState("success");
+      setTimeout(() => setRefreshState("idle"), 1000);
+    }, 300);
+  };
 
   return (
-    <section className="dashboard-page history-page" aria-labelledby="history-title">
+    <section
+      className="dashboard-page history-page"
+      aria-labelledby="history-title"
+    >
       <header className="dashboard-hero-banner">
         <div className="banner-text">
           <p className="eyebrow">REGISTRO HISTÓRICO Y AUDITORÍA</p>
           <h1 id="history-title">Historial de traslados</h1>
           <p className="dashboard-subtitle">
-            Consulta detallada de todos los traslados realizados y no realizados con información completa, filtros y auditoría.
+            Consulta detallada de todos los traslados realizados y no realizados
+            con información completa, filtros y auditoría.
           </p>
         </div>
         <div className="banner-right">
-          <img className="banner-logo" src="/logooo-Photoroom.png" alt="Clínica Nueva de Cali" />
+          <img
+            className="banner-logo"
+            src="/logooo-Photoroom.png"
+            alt="Clínica Nueva de Cali"
+          />
         </div>
       </header>
 
       <div className="history-nav-bar">
-        <button type="button" className="analytics-link-btn" onClick={() => onNavigate('dashboard')}>
+        <button
+          type="button"
+          className="analytics-link-btn"
+          onClick={() => onNavigate("dashboard")}
+        >
           Central de camilleros
         </button>
       </div>
 
       <div className="dashboard-stats history-stats">
-        <div><span>Total en historial</span><strong>{totalCount}</strong></div>
-        <div><span>Realizados</span><strong>{completedCount}</strong></div>
-        <div className="not-realized-stat"><span>No realizados</span><strong style={{ color: '#d97706' }}>{notRealizedCount}</strong></div>
-        <div className="highlight-kpi-small"><span>Tiempo promedio</span><strong>{formatDuration(avgDuration)}</strong></div>
+        <div>
+          <span>Total en historial</span>
+          <strong>{totalCount}</strong>
+        </div>
+        <div>
+          <span>Realizados</span>
+          <strong>{completedCount}</strong>
+        </div>
+        <div className="not-realized-stat">
+          <span>No realizados</span>
+          <strong style={{ color: "#d97706" }}>{notRealizedCount}</strong>
+        </div>
+        <div className="highlight-kpi-small">
+          <span>Tiempo promedio</span>
+          <strong>{formatDuration(avgDuration)}</strong>
+        </div>
       </div>
 
       <div className="analytics-toolbar history-toolbar">
@@ -1747,7 +2433,10 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
 
         <label className="filter-select">
           <span>Estado</span>
-          <select value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)}>
+          <select
+            value={selectedStatus}
+            onChange={(e) => setSelectedStatus(e.target.value)}
+          >
             <option value="TODOS">Todos (Realizados y No realizados)</option>
             <option value="REALIZADO">Realizados</option>
             <option value="NO REALIZADO">No realizados</option>
@@ -1756,27 +2445,40 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
 
         <label className="filter-select">
           <span>Servicio</span>
-          <select value={selectedService} onChange={(e) => setSelectedService(e.target.value)}>
+          <select
+            value={selectedService}
+            onChange={(e) => setSelectedService(e.target.value)}
+          >
             <option value="TODOS">Todos los servicios</option>
             {availableServices.map((s) => (
-              <option key={s} value={s}>{s}</option>
+              <option key={s} value={s}>
+                {s}
+              </option>
             ))}
           </select>
         </label>
 
         <label className="filter-select">
           <span>Camillero</span>
-          <select value={selectedMover} onChange={(e) => setSelectedMover(e.target.value)}>
+          <select
+            value={selectedMover}
+            onChange={(e) => setSelectedMover(e.target.value)}
+          >
             <option value="TODOS">Todos los camilleros</option>
             {availableMovers.map((m) => (
-              <option key={m} value={m}>{m}</option>
+              <option key={m} value={m}>
+                {m}
+              </option>
             ))}
           </select>
         </label>
 
         <label className="filter-select">
           <span>Prioridad</span>
-          <select value={selectedPriority} onChange={(e) => setSelectedPriority(e.target.value)}>
+          <select
+            value={selectedPriority}
+            onChange={(e) => setSelectedPriority(e.target.value)}
+          >
             <option value="TODOS">Todas</option>
             <option value="alta">alta</option>
             <option value="media">media</option>
@@ -1786,7 +2488,10 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
 
         <label className="filter-select">
           <span>Transporte</span>
-          <select value={selectedTransport} onChange={(e) => setSelectedTransport(e.target.value)}>
+          <select
+            value={selectedTransport}
+            onChange={(e) => setSelectedTransport(e.target.value)}
+          >
             <option value="TODOS">Todos</option>
             <option value="silla de ruedas">silla de ruedas</option>
             <option value="cama">cama</option>
@@ -1796,7 +2501,10 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
 
         <label className="filter-select">
           <span>Soporte O2</span>
-          <select value={selectedOxygen} onChange={(e) => setSelectedOxygen(e.target.value)}>
+          <select
+            value={selectedOxygen}
+            onChange={(e) => setSelectedOxygen(e.target.value)}
+          >
             <option value="TODOS">Todos</option>
             <option value="si">si</option>
             <option value="no">no</option>
@@ -1809,8 +2517,16 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
           onClick={triggerRefresh}
           title="Actualizar datos"
         >
-          <span className="refresh-icon" aria-hidden="true">↻</span>
-          <span>{refreshState === 'refreshing' ? 'Actualizando...' : refreshState === 'success' ? '¡Actualizado!' : 'Actualizar'}</span>
+          <span className="refresh-icon" aria-hidden="true">
+            ↻
+          </span>
+          <span>
+            {refreshState === "refreshing"
+              ? "Actualizando..."
+              : refreshState === "success"
+                ? "¡Actualizado!"
+                : "Actualizar"}
+          </span>
         </button>
       </div>
 
@@ -1819,13 +2535,18 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
           <div className="table-caption-left">
             <div>
               <strong>Historial Completo de Traslados</strong>
-              <span>{filteredRequests.length} registros con toda la información</span>
+              <span>
+                {filteredRequests.length} registros con toda la información
+              </span>
             </div>
           </div>
-          <span className="table-hint">Haz clic en Detalles para ver la ficha individual completa</span>
+          <span className="table-hint">
+            Haz clic en Detalles para ver la ficha individual completa
+          </span>
         </div>
         <div className="mobile-scroll-hint">
-          <span>↔</span> Desliza la tabla horizontalmente para ver todos los campos
+          <span>↔</span> Desliza la tabla horizontalmente para ver todos los
+          campos
         </div>
         <div className="table-scroll">
           <table className="compact-movement-table history-full-table">
@@ -1855,61 +2576,109 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
             </thead>
             <tbody>
               {paginatedRequests.map((req) => {
-                const isCompleted = req.status === 'REALIZADO'
-                const serviceDur = isCompleted ? calculateDurationMinutes(req.assignmentTime || req.timestamp, req.movementTime) : null
-                const reactDur = calculateDurationMinutes(req.timestamp, req.assignmentTime || (isCompleted ? req.movementTime : null))
-                const totalDur = isCompleted ? calculateDurationMinutes(req.timestamp, req.movementTime) : null
-                const badgeClass = totalDur === null ? '' : totalDur <= 15 ? 'fast-duration' : totalDur <= 35 ? 'medium-duration' : 'slow-duration'
+                const isCompleted = req.status === "REALIZADO";
+                const serviceDur = isCompleted
+                  ? calculateDurationMinutes(
+                      req.assignmentTime || req.timestamp,
+                      req.movementTime,
+                    )
+                  : null;
+                const reactDur = calculateDurationMinutes(
+                  req.timestamp,
+                  req.assignmentTime || (isCompleted ? req.movementTime : null),
+                );
+                const totalDur = isCompleted
+                  ? calculateDurationMinutes(req.timestamp, req.movementTime)
+                  : null;
+                const badgeClass =
+                  totalDur === null
+                    ? ""
+                    : totalDur <= 15
+                      ? "fast-duration"
+                      : totalDur <= 35
+                        ? "medium-duration"
+                        : "slow-duration";
                 return (
-                  <tr key={req.id} className={req.status === 'PENDIENTE' ? 'pending-row' : ''}>
-                    <td><strong className="id-badge-tag">{req.requestId || 'TR-1000'}</strong></td>
-                    <td>{req.timestamp}</td>
-                    <td>{req.assignmentTime || 'Pendiente'}</td>
-                    <td>{isCompleted ? req.movementTime : 'Pendiente'}</td>
+                  <tr
+                    key={req.id}
+                    className={req.status === "PENDIENTE" ? "pending-row" : ""}
+                  >
                     <td>
-                      <span className={`badge-pill ${isCompleted && serviceDur !== null ? 'pill-blue' : 'pill-gray'}`}>
-                        {isCompleted && serviceDur !== null ? formatDuration(serviceDur) : '—'}
+                      <strong className="id-badge-tag">
+                        {req.requestId || "TR-1000"}
+                      </strong>
+                    </td>
+                    <td>{req.timestamp}</td>
+                    <td>{req.assignmentTime || "Pendiente"}</td>
+                    <td>{isCompleted ? req.movementTime : "Pendiente"}</td>
+                    <td>
+                      <span
+                        className={`badge-pill ${isCompleted && serviceDur !== null ? "pill-blue" : "pill-gray"}`}
+                      >
+                        {isCompleted && serviceDur !== null
+                          ? formatDuration(serviceDur)
+                          : "—"}
                       </span>
                     </td>
                     <td>
-                      <span className={`badge-pill ${reactDur !== null ? 'pill-purple' : 'pill-gray'}`}>
-                        {reactDur !== null ? formatDuration(reactDur) : '—'}
+                      <span
+                        className={`badge-pill ${reactDur !== null ? "pill-purple" : "pill-gray"}`}
+                      >
+                        {reactDur !== null ? formatDuration(reactDur) : "—"}
                       </span>
                     </td>
                     <td>
                       {isCompleted && totalDur !== null ? (
-                        <span className={`duration-badge ${badgeClass}`}>{formatDuration(totalDur)}</span>
+                        <span className={`duration-badge ${badgeClass}`}>
+                          {formatDuration(totalDur)}
+                        </span>
                       ) : (
                         <span className="duration-badge">—</span>
                       )}
                     </td>
                     <td>
-                      <span className={`priority-badge priority-${(req.priority || 'media').toLowerCase()}`}>
-                        {(req.priority || 'media').toUpperCase()}
+                      <span
+                        className={`priority-badge priority-${(req.priority || "media").toLowerCase()}`}
+                      >
+                        {(req.priority || "media").toUpperCase()}
                       </span>
                     </td>
-                    <td><strong>{req.patient}</strong></td>
+                    <td>
+                      <strong>{req.patient}</strong>
+                    </td>
                     <td>{req.record}</td>
                     <td>{req.service}</td>
                     <td>{req.location}</td>
                     <td>{req.destination}</td>
                     <td>{req.transport}</td>
                     <td>{req.oxygen}</td>
-                    <td>{req.observation || '—'}</td>
-                    <td className={`status-cell ${req.status.toLowerCase().replaceAll(' ', '-')}`}>{req.status}</td>
-                    <td><strong>{req.mover}</strong></td>
-                    <td>{req.centralObservation || '—'}</td>
+                    <td>{req.observation || "—"}</td>
+                    <td
+                      className={`status-cell ${req.status.toLowerCase().replaceAll(" ", "-")}`}
+                    >
+                      {req.status}
+                    </td>
+                    <td>
+                      <strong>{req.mover}</strong>
+                    </td>
+                    <td>{req.centralObservation || "—"}</td>
                     <td className="row-actions">
-                      <button className="details-button" type="button" onClick={() => setDetailRequest(req)}>
+                      <button
+                        className="details-button"
+                        type="button"
+                        onClick={() => setDetailRequest(req)}
+                      >
                         Detalles
                       </button>
                     </td>
                   </tr>
-                )
+                );
               })}
               {!filteredRequests.length && (
                 <tr>
-                  <td colSpan={20} className="empty-state">No se encontraron traslados con los filtros seleccionados.</td>
+                  <td colSpan={20} className="empty-state">
+                    No se encontraron traslados con los filtros seleccionados.
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -1928,366 +2697,603 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <header className="modal-header">
               <h2>Detalles de la Solicitud</h2>
-              <button type="button" className="close-modal-btn" onClick={() => setDetailRequest(null)}>✕</button>
+              <button
+                type="button"
+                className="close-modal-btn"
+                onClick={() => setDetailRequest(null)}
+              >
+                ✕
+              </button>
             </header>
             <div className="modal-grid">
-              <div className="detail-item"><span>ID de Solicitud</span><strong className="id-highlight">{detailRequest.requestId || 'TR-1000'}</strong></div>
-              <div className="detail-item"><span>Marca temporal</span><strong>{detailRequest.timestamp}</strong></div>
-              <div className="detail-item"><span>Hora tomada / asignada</span><strong>{detailRequest.assignmentTime || 'Pendiente'}</strong></div>
-              <div className="detail-item"><span>Oportunidad de Servicio</span><strong>{detailRequest.status === 'REALIZADO' ? detailRequest.movementTime : 'Pendiente'}</strong></div>
-              <div className="detail-item"><span>Prioridad</span><strong className={`priority-badge priority-${(detailRequest.priority || 'media').toLowerCase()}`}>{(detailRequest.priority || 'media').toUpperCase()}</strong></div>
-              <div className="detail-item"><span>Nombre de paciente</span><strong>{detailRequest.patient}</strong></div>
-              <div className="detail-item"><span>Registro</span><strong>{detailRequest.record}</strong></div>
-              <div className="detail-item"><span>Servicio que solicita</span><strong>{detailRequest.service}</strong></div>
-              <div className="detail-item"><span>Ubicación específica</span><strong>{detailRequest.location}</strong></div>
-              <div className="detail-item"><span>Destino</span><strong>{detailRequest.destination}</strong></div>
-              <div className="detail-item"><span>Medio de transporte</span><strong>{detailRequest.transport}</strong></div>
-              <div className="detail-item"><span>Soporte de O2</span><strong>{detailRequest.oxygen}</strong></div>
-              <div className="detail-item"><span>Aislamiento</span><strong>{detailRequest.isolation || '—'}</strong></div> 
-              <div className="detail-item full-width"><span>Observaciones solicitud</span><strong>{detailRequest.observation || 'Sin observaciones'}</strong></div>
-              <div className="detail-item"><span>Confirmación de movimiento</span><strong className={`status-badge-tag ${detailRequest.status.toLowerCase().replaceAll(' ', '-')}`}>{detailRequest.status}</strong></div>
-              <div className="detail-item"><span>Camillero que realiza</span><strong>{detailRequest.mover}</strong></div>
-              <div className="detail-item full-width"><span>Observación camilleros</span><strong>{detailRequest.centralObservation || 'Sin observación'}</strong></div>
+              <div className="detail-item">
+                <span>ID de Solicitud</span>
+                <strong className="id-highlight">
+                  {detailRequest.requestId || "TR-1000"}
+                </strong>
+              </div>
+              <div className="detail-item">
+                <span>Marca temporal</span>
+                <strong>{detailRequest.timestamp}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Hora tomada / asignada</span>
+                <strong>{detailRequest.assignmentTime || "Pendiente"}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Oportunidad de Servicio</span>
+                <strong>
+                  {detailRequest.status === "REALIZADO"
+                    ? detailRequest.movementTime
+                    : "Pendiente"}
+                </strong>
+              </div>
+              <div className="detail-item">
+                <span>Prioridad</span>
+                <strong
+                  className={`priority-badge priority-${(detailRequest.priority || "media").toLowerCase()}`}
+                >
+                  {(detailRequest.priority || "media").toUpperCase()}
+                </strong>
+              </div>
+              <div className="detail-item">
+                <span>Nombre de paciente</span>
+                <strong>{detailRequest.patient}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Registro</span>
+                <strong>{detailRequest.record}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Servicio que solicita</span>
+                <strong>{detailRequest.service}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Ubicación específica</span>
+                <strong>{detailRequest.location}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Destino</span>
+                <strong>{detailRequest.destination}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Medio de transporte</span>
+                <strong>{detailRequest.transport}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Soporte de O2</span>
+                <strong>{detailRequest.oxygen}</strong>
+              </div>
+              <div className="detail-item">
+                <span>Aislamiento</span>
+                <strong>{detailRequest.isolation || "—"}</strong>
+              </div>
+              <div className="detail-item full-width">
+                <span>Observaciones solicitud</span>
+                <strong>
+                  {detailRequest.observation || "Sin observaciones"}
+                </strong>
+              </div>
+              <div className="detail-item">
+                <span>Confirmación de movimiento</span>
+                <strong
+                  className={`status-badge-tag ${detailRequest.status.toLowerCase().replaceAll(" ", "-")}`}
+                >
+                  {detailRequest.status}
+                </strong>
+              </div>
+              <div className="detail-item">
+                <span>Camillero que realiza</span>
+                <strong>{detailRequest.mover}</strong>
+              </div>
+              <div className="detail-item full-width">
+                <span>Observación camilleros</span>
+                <strong>
+                  {detailRequest.centralObservation || "Sin observación"}
+                </strong>
+              </div>
             </div>
             <footer className="modal-footer">
-              <button className="submit-button" type="button" onClick={() => setDetailRequest(null)}>Cerrar</button>
+              <button
+                className="submit-button"
+                type="button"
+                onClick={() => setDetailRequest(null)}
+              >
+                Cerrar
+              </button>
             </footer>
           </div>
         </div>
       )}
     </section>
-  )
+  );
 }
 
-function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCamilleros, onRefresh, onNavigate }) {
-  const [requests, setRequests] = useState(initialRequests || readRequests)
+function AnalyticsPage({
+  requests: initialRequests,
+  camilleros = [],
+  onUpdateCamilleros,
+  onRefresh,
+  onNavigate,
+}) {
+  const [requests, setRequests] = useState(initialRequests || readRequests);
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return window.sessionStorage.getItem('indicadores_auth') === 'true'
-  })
-  const [passwordInput, setPasswordInput] = useState('')
-  const [passwordError, setPasswordError] = useState('')
-  const [query, setQuery] = useState('')
-  const [selectedStatus, setSelectedStatus] = useState('TODOS')
-  const [selectedDays, setSelectedDays] = useState([])
-  const [selectedService, setSelectedService] = useState('TODOS')
-  const [selectedMover, setSelectedMover] = useState('TODOS')
-  const [selectedPriority, setSelectedPriority] = useState('TODOS')
-  const [selectedOxygen, setSelectedOxygen] = useState('TODOS')
-  const [selectedTransport, setSelectedTransport] = useState('TODOS')
-  const [currentPage, setCurrentPage] = useState(1)
-  const [newCamilleroName, setNewCamilleroName] = useState('')
-  const [showCamillerosModal, setShowCamillerosModal] = useState(false)
-  const [refreshState, setRefreshState] = useState('idle')
+    return window.sessionStorage.getItem("indicadores_auth") === "true";
+  });
+  const [passwordInput, setPasswordInput] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [query, setQuery] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState("TODOS");
+  const [selectedDays, setSelectedDays] = useState([]);
+  const [selectedService, setSelectedService] = useState("TODOS");
+  const [selectedMover, setSelectedMover] = useState("TODOS");
+  const [selectedPriority, setSelectedPriority] = useState("TODOS");
+  const [selectedOxygen, setSelectedOxygen] = useState("TODOS");
+  const [selectedTransport, setSelectedTransport] = useState("TODOS");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [newCamilleroName, setNewCamilleroName] = useState("");
+  const [showCamillerosModal, setShowCamillerosModal] = useState(false);
+  const [refreshState, setRefreshState] = useState("idle");
 
   const handlePasswordSubmit = (e) => {
-    e?.preventDefault()
-    if (passwordInput.trim() === 'CNC2026') {
-      setIsAuthenticated(true)
-      window.sessionStorage.setItem('indicadores_auth', 'true')
-      setPasswordError('')
+    e?.preventDefault();
+    if (passwordInput.trim() === "CNC2026") {
+      setIsAuthenticated(true);
+      window.sessionStorage.setItem("indicadores_auth", "true");
+      setPasswordError("");
     } else {
-      setPasswordError('Contraseña incorrecta. Verifica e intenta de nuevo.')
+      setPasswordError("Contraseña incorrecta. Verifica e intenta de nuevo.");
     }
-  }
+  };
 
   useEffect(() => {
-    if (initialRequests) setRequests(initialRequests)
-  }, [initialRequests])
+    if (initialRequests) setRequests(initialRequests);
+  }, [initialRequests]);
 
   useEffect(() => {
-    setCurrentPage(1)
-  }, [query, selectedStatus, selectedDays, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport])
+    setCurrentPage(1);
+  }, [
+    query,
+    selectedStatus,
+    selectedDays,
+    selectedService,
+    selectedMover,
+    selectedPriority,
+    selectedOxygen,
+    selectedTransport,
+  ]);
 
   const handleAddCamillero = (e) => {
-    e.preventDefault()
-    const cleanName = formatLowercase(newCamilleroName.trim())
+    e.preventDefault();
+    const cleanName = formatLowercase(newCamilleroName.trim());
     if (cleanName && !(camilleros || []).includes(cleanName)) {
-      const next = [...(camilleros || []), cleanName]
-      setNewCamilleroName('')
+      const next = [...(camilleros || []), cleanName];
+      setNewCamilleroName("");
       if (onUpdateCamilleros) {
-        onUpdateCamilleros(next, cleanName, null)
+        onUpdateCamilleros(next, cleanName, null);
       }
     }
-  }
+  };
 
   const handleRemoveCamillero = (nameToRemove) => {
-    const next = (camilleros || []).filter((c) => c !== nameToRemove)
+    const next = (camilleros || []).filter((c) => c !== nameToRemove);
     if (onUpdateCamilleros) {
-      onUpdateCamilleros(next, null, nameToRemove)
+      onUpdateCamilleros(next, null, nameToRemove);
     }
-  }
+  };
 
   const triggerRefresh = () => {
-    setRefreshState('refreshing')
-    if (onRefresh) onRefresh(true)
+    setRefreshState("refreshing");
+    if (onRefresh) onRefresh(true);
     setTimeout(() => {
-      setRefreshState('success')
-      setTimeout(() => setRefreshState('idle'), 1000)
-    }, 300)
-  }
+      setRefreshState("success");
+      setTimeout(() => setRefreshState("idle"), 1000);
+    }, 300);
+  };
 
   const availableDays = useMemo(() => {
-    const map = {}
+    const map = {};
     for (const req of requests) {
-      const iso = getTimestampISODate(req.timestamp)
+      const iso = getTimestampISODate(req.timestamp);
       if (iso) {
-        map[iso] = (map[iso] || 0) + 1
+        map[iso] = (map[iso] || 0) + 1;
       }
     }
     return Object.entries(map)
       .sort((a, b) => b[0].localeCompare(a[0]))
-      .map(([iso, count]) => ({ iso, count }))
-  }, [requests])
+      .map(([iso, count]) => ({ iso, count }));
+  }, [requests]);
 
   const availableServices = useMemo(() => {
-    const set = new Set()
+    const set = new Set();
     for (const req of requests) {
-      if (req.service) set.add(req.service)
+      if (req.service) set.add(req.service);
     }
-    return Array.from(set).sort()
-  }, [requests])
+    return Array.from(set).sort();
+  }, [requests]);
 
   const availableMovers = useMemo(() => {
-    const set = new Set()
+    const set = new Set();
     for (const req of requests) {
-      if (req.mover && req.mover !== 'sin asignar' && req.mover !== 'Sin asignar') {
-        set.add(req.mover)
+      if (
+        req.mover &&
+        req.mover !== "sin asignar" &&
+        req.mover !== "Sin asignar"
+      ) {
+        set.add(req.mover);
       }
     }
-    return Array.from(set).sort()
-  }, [requests])
+    return Array.from(set).sort();
+  }, [requests]);
 
   const filteredRequests = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    const q = query.trim().toLowerCase();
     return requests.filter((req) => {
-      if (selectedStatus !== 'TODOS') {
-        if (String(req.status || '').toUpperCase() !== selectedStatus.toUpperCase()) return false
+      if (selectedStatus !== "TODOS") {
+        if (
+          String(req.status || "").toUpperCase() !==
+          selectedStatus.toUpperCase()
+        )
+          return false;
       }
 
       if (selectedDays.length > 0) {
-        const reqDateStr = getTimestampISODate(req.timestamp)
-        if (!reqDateStr || !selectedDays.includes(reqDateStr)) return false
+        const reqDateStr = getTimestampISODate(req.timestamp);
+        if (!reqDateStr || !selectedDays.includes(reqDateStr)) return false;
       }
 
-      if (selectedService !== 'TODOS') {
-        if ((req.service || '').toLowerCase().trim() !== selectedService.toLowerCase().trim()) return false
+      if (selectedService !== "TODOS") {
+        if (
+          (req.service || "").toLowerCase().trim() !==
+          selectedService.toLowerCase().trim()
+        )
+          return false;
       }
 
-      if (selectedMover !== 'TODOS') {
-        if ((req.mover || '').toLowerCase().trim() !== selectedMover.toLowerCase().trim()) return false
+      if (selectedMover !== "TODOS") {
+        if (
+          (req.mover || "").toLowerCase().trim() !==
+          selectedMover.toLowerCase().trim()
+        )
+          return false;
       }
 
-      if (selectedPriority !== 'TODOS') {
-        if ((req.priority || 'media').toLowerCase().trim() !== selectedPriority.toLowerCase().trim()) return false
+      if (selectedPriority !== "TODOS") {
+        if (
+          (req.priority || "media").toLowerCase().trim() !==
+          selectedPriority.toLowerCase().trim()
+        )
+          return false;
       }
 
-      if (selectedOxygen !== 'TODOS') {
-        if ((req.oxygen || '').toLowerCase().trim() !== selectedOxygen.toLowerCase().trim()) return false
+      if (selectedOxygen !== "TODOS") {
+        if (
+          (req.oxygen || "").toLowerCase().trim() !==
+          selectedOxygen.toLowerCase().trim()
+        )
+          return false;
       }
 
-      if (selectedTransport !== 'TODOS') {
-        if ((req.transport || '').toLowerCase().trim() !== selectedTransport.toLowerCase().trim()) return false
+      if (selectedTransport !== "TODOS") {
+        if (
+          (req.transport || "").toLowerCase().trim() !==
+          selectedTransport.toLowerCase().trim()
+        )
+          return false;
       }
 
       if (q) {
-        const idMatch = (req.requestId || '').toLowerCase().includes(q)
-        const patientMatch = (req.patient || '').toLowerCase().includes(q)
-        const recordMatch = (req.record || '').toLowerCase().includes(q)
-        const destMatch = (req.destination || '').toLowerCase().includes(q)
-        const obsMatch = (req.observation || '').toLowerCase().includes(q)
-        const centralObsMatch = (req.centralObservation || '').toLowerCase().includes(q)
-        const moverMatch = (req.mover || '').toLowerCase().includes(q)
-        const priorityMatch = (req.priority || '').toLowerCase().includes(q)
-        if (!idMatch && !patientMatch && !recordMatch && !destMatch && !obsMatch && !centralObsMatch && !moverMatch && !priorityMatch) {
-          return false
+        const idMatch = (req.requestId || "").toLowerCase().includes(q);
+        const patientMatch = (req.patient || "").toLowerCase().includes(q);
+        const recordMatch = (req.record || "").toLowerCase().includes(q);
+        const destMatch = (req.destination || "").toLowerCase().includes(q);
+        const obsMatch = (req.observation || "").toLowerCase().includes(q);
+        const centralObsMatch = (req.centralObservation || "")
+          .toLowerCase()
+          .includes(q);
+        const moverMatch = (req.mover || "").toLowerCase().includes(q);
+        const priorityMatch = (req.priority || "").toLowerCase().includes(q);
+        if (
+          !idMatch &&
+          !patientMatch &&
+          !recordMatch &&
+          !destMatch &&
+          !obsMatch &&
+          !centralObsMatch &&
+          !moverMatch &&
+          !priorityMatch
+        ) {
+          return false;
         }
       }
 
-      return true
-    })
-  }, [requests, selectedDays, selectedStatus, selectedService, selectedMover, selectedPriority, selectedOxygen, selectedTransport, query])
+      return true;
+    });
+  }, [
+    requests,
+    selectedDays,
+    selectedStatus,
+    selectedService,
+    selectedMover,
+    selectedPriority,
+    selectedOxygen,
+    selectedTransport,
+    query,
+  ]);
 
   const paginatedRequests = useMemo(() => {
-    const start = (currentPage - 1) * 10
-    return filteredRequests.slice(start, start + 10)
-  }, [filteredRequests, currentPage])
+    const start = (currentPage - 1) * 10;
+    return filteredRequests.slice(start, start + 10);
+  }, [filteredRequests, currentPage]);
 
-  const totalCompleted = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'REALIZADO').length
-  const totalPending = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'PENDIENTE').length
-  const totalNotRealized = filteredRequests.filter((r) => String(r.status || '').toUpperCase() === 'NO REALIZADO').length
+  const totalCompleted = filteredRequests.filter(
+    (r) => String(r.status || "").toUpperCase() === "REALIZADO",
+  ).length;
+  const totalPending = filteredRequests.filter(
+    (r) => String(r.status || "").toUpperCase() === "PENDIENTE",
+  ).length;
+  const totalNotRealized = filteredRequests.filter(
+    (r) => String(r.status || "").toUpperCase() === "NO REALIZADO",
+  ).length;
 
   const totalServiceMinutes = useMemo(() => {
-    let sum = 0, count = 0
+    let sum = 0,
+      count = 0;
     for (const req of filteredRequests) {
-      if (req.status === 'REALIZADO') {
-        const dur = calculateDurationMinutes(req.assignmentTime || req.timestamp, req.movementTime)
+      if (req.status === "REALIZADO") {
+        const dur = calculateDurationMinutes(
+          req.assignmentTime || req.timestamp,
+          req.movementTime,
+        );
         if (dur !== null) {
-          sum += dur
-          count++
+          sum += dur;
+          count++;
         }
       }
     }
-    return count > 0 ? Math.round(sum / count) : 0
-  }, [filteredRequests])
+    return count > 0 ? Math.round(sum / count) : 0;
+  }, [filteredRequests]);
 
   const totalReactionMinutes = useMemo(() => {
-    let sum = 0, count = 0
+    let sum = 0,
+      count = 0;
     for (const req of filteredRequests) {
-      const reactTime = req.assignmentTime || (req.status === 'REALIZADO' ? req.movementTime : null)
-      const dur = calculateDurationMinutes(req.timestamp, reactTime)
+      const reactTime =
+        req.assignmentTime ||
+        (req.status === "REALIZADO" ? req.movementTime : null);
+      const dur = calculateDurationMinutes(req.timestamp, reactTime);
       if (dur !== null) {
-        sum += dur
-        count++
+        sum += dur;
+        count++;
       }
     }
-    return count > 0 ? Math.round(sum / count) : 0
-  }, [filteredRequests])
+    return count > 0 ? Math.round(sum / count) : 0;
+  }, [filteredRequests]);
 
   const totalDurationMinutes = useMemo(() => {
-    let sum = 0, count = 0
+    let sum = 0,
+      count = 0;
     for (const req of filteredRequests) {
-      if (req.status === 'REALIZADO') {
-        const dur = calculateDurationMinutes(req.timestamp, req.movementTime)
+      if (req.status === "REALIZADO") {
+        const dur = calculateDurationMinutes(req.timestamp, req.movementTime);
         if (dur !== null) {
-          sum += dur
-          count++
+          sum += dur;
+          count++;
         }
       }
     }
-    return count > 0 ? Math.round(sum / count) : 0
-  }, [filteredRequests])
+    return count > 0 ? Math.round(sum / count) : 0;
+  }, [filteredRequests]);
 
   const o2Stats = useMemo(() => {
     const calcCategory = (val) => {
-      const list = filteredRequests.filter((r) => (r.oxygen || '').toLowerCase() === val)
-      const total = filteredRequests.length
-      const pct = total > 0 ? ((list.length / total) * 100).toFixed(1) : '0.0'
-      return { count: list.length, pct }
-    }
+      const list = filteredRequests.filter(
+        (r) => (r.oxygen || "").toLowerCase() === val,
+      );
+      const total = filteredRequests.length;
+      const pct = total > 0 ? ((list.length / total) * 100).toFixed(1) : "0.0";
+      return { count: list.length, pct };
+    };
     return {
-      withO2: calcCategory('si'),
-      withoutO2: calcCategory('no'),
-    }
-  }, [filteredRequests])
+      withO2: calcCategory("si"),
+      withoutO2: calcCategory("no"),
+    };
+  }, [filteredRequests]);
 
   const transportStats = useMemo(() => {
     const calcCategory = (val) => {
-      const list = filteredRequests.filter((r) => (r.transport || '').toLowerCase() === val)
-      const total = filteredRequests.length
-      const pct = total > 0 ? ((list.length / total) * 100).toFixed(1) : '0.0'
+      const list = filteredRequests.filter(
+        (r) => (r.transport || "").toLowerCase() === val,
+      );
+      const total = filteredRequests.length;
+      const pct = total > 0 ? ((list.length / total) * 100).toFixed(1) : "0.0";
 
-      let sumService = 0, countService = 0
-      let sumReact = 0, countReact = 0
-      let sumGlobal = 0, countGlobal = 0
+      let sumService = 0,
+        countService = 0;
+      let sumReact = 0,
+        countReact = 0;
+      let sumGlobal = 0,
+        countGlobal = 0;
 
       for (const req of list) {
-        const reactDur = calculateDurationMinutes(req.timestamp, req.assignmentTime || (req.status === 'REALIZADO' ? req.movementTime : null))
+        const reactDur = calculateDurationMinutes(
+          req.timestamp,
+          req.assignmentTime ||
+            (req.status === "REALIZADO" ? req.movementTime : null),
+        );
         if (reactDur !== null) {
-          sumReact += reactDur
-          countReact += 1
+          sumReact += reactDur;
+          countReact += 1;
         }
-        if (req.status === 'REALIZADO') {
-          const servDur = calculateDurationMinutes(req.assignmentTime || req.timestamp, req.movementTime)
+        if (req.status === "REALIZADO") {
+          const servDur = calculateDurationMinutes(
+            req.assignmentTime || req.timestamp,
+            req.movementTime,
+          );
           if (servDur !== null) {
-            sumService += servDur
-            countService += 1
+            sumService += servDur;
+            countService += 1;
           }
-          const globDur = calculateDurationMinutes(req.timestamp, req.movementTime)
+          const globDur = calculateDurationMinutes(
+            req.timestamp,
+            req.movementTime,
+          );
           if (globDur !== null) {
-            sumGlobal += globDur
-            countGlobal += 1
+            sumGlobal += globDur;
+            countGlobal += 1;
           }
         }
       }
 
-      const avgService = countService > 0 ? Math.round(sumService / countService) : 0
-      const avgReact = countReact > 0 ? Math.round(sumReact / countReact) : 0
-      const avgGlobal = countGlobal > 0 ? Math.round(sumGlobal / countGlobal) : 0
+      const avgService =
+        countService > 0 ? Math.round(sumService / countService) : 0;
+      const avgReact = countReact > 0 ? Math.round(sumReact / countReact) : 0;
+      const avgGlobal =
+        countGlobal > 0 ? Math.round(sumGlobal / countGlobal) : 0;
 
-      return { count: list.length, pct, avgService, avgReact, avgGlobal }
-    }
+      return { count: list.length, pct, avgService, avgReact, avgGlobal };
+    };
     return {
-      wheelchair: calcCategory('silla de ruedas'),
-      bed: calcCategory('cama'),
-      ambulance: calcCategory('camilla ambulancia'),
-    }
-  }, [filteredRequests])
+      wheelchair: calcCategory("silla de ruedas"),
+      bed: calcCategory("cama"),
+      ambulance: calcCategory("camilla ambulancia"),
+    };
+  }, [filteredRequests]);
 
   const priorityStats = useMemo(() => {
     const calcCategory = (val, colorClass) => {
-      const list = filteredRequests.filter((r) => (r.priority || 'media').toLowerCase() === val)
-      const total = filteredRequests.length
-      const pct = total > 0 ? ((list.length / total) * 100).toFixed(1) : '0.0'
+      const list = filteredRequests.filter(
+        (r) => (r.priority || "media").toLowerCase() === val,
+      );
+      const total = filteredRequests.length;
+      const pct = total > 0 ? ((list.length / total) * 100).toFixed(1) : "0.0";
 
-      let sumService = 0, countService = 0
-      let sumReact = 0, countReact = 0
-      let sumGlobal = 0, countGlobal = 0
+      let sumService = 0,
+        countService = 0;
+      let sumReact = 0,
+        countReact = 0;
+      let sumGlobal = 0,
+        countGlobal = 0;
 
       for (const req of list) {
-        const reactDur = calculateDurationMinutes(req.timestamp, req.assignmentTime || (req.status === 'REALIZADO' ? req.movementTime : null))
+        const reactDur = calculateDurationMinutes(
+          req.timestamp,
+          req.assignmentTime ||
+            (req.status === "REALIZADO" ? req.movementTime : null),
+        );
         if (reactDur !== null) {
-          sumReact += reactDur
-          countReact += 1
+          sumReact += reactDur;
+          countReact += 1;
         }
-        if (req.status === 'REALIZADO') {
-          const sDur = calculateDurationMinutes(req.assignmentTime || req.timestamp, req.movementTime)
+        if (req.status === "REALIZADO") {
+          const sDur = calculateDurationMinutes(
+            req.assignmentTime || req.timestamp,
+            req.movementTime,
+          );
           if (sDur !== null) {
-            sumService += sDur
-            countService += 1
+            sumService += sDur;
+            countService += 1;
           }
-          const gDur = calculateDurationMinutes(req.timestamp, req.movementTime)
+          const gDur = calculateDurationMinutes(
+            req.timestamp,
+            req.movementTime,
+          );
           if (gDur !== null) {
-            sumGlobal += gDur
-            countGlobal += 1
+            sumGlobal += gDur;
+            countGlobal += 1;
           }
         }
       }
 
-      const avgService = countService > 0 ? Math.round(sumService / countService) : 0
-      const avgReact = countReact > 0 ? Math.round(sumReact / countReact) : 0
-      const avgGlobal = countGlobal > 0 ? Math.round(sumGlobal / countGlobal) : 0
+      const avgService =
+        countService > 0 ? Math.round(sumService / countService) : 0;
+      const avgReact = countReact > 0 ? Math.round(sumReact / countReact) : 0;
+      const avgGlobal =
+        countGlobal > 0 ? Math.round(sumGlobal / countGlobal) : 0;
 
-      return { count: list.length, pct, avgService, avgReact, avgGlobal, colorClass }
-    }
+      return {
+        count: list.length,
+        pct,
+        avgService,
+        avgReact,
+        avgGlobal,
+        colorClass,
+      };
+    };
     return {
-      alta: calcCategory('alta', 'fill-red'),
-      media: calcCategory('media', 'fill-orange'),
-      baja: calcCategory('baja', 'fill-green'),
-    }
-  }, [filteredRequests])
+      alta: calcCategory("alta", "fill-red"),
+      media: calcCategory("media", "fill-orange"),
+      baja: calcCategory("baja", "fill-green"),
+    };
+  }, [filteredRequests]);
 
   const camilleroStats = useMemo(() => {
-    const map = {}
-    for (const name of (camilleros || [])) {
-      map[name.toLowerCase().trim()] = { count: 0, serviceMins: 0, reactMins: 0, globalMins: 0, reactCount: 0, completedCount: 0 }
+    const map = {};
+    for (const name of camilleros || []) {
+      map[name.toLowerCase().trim()] = {
+        count: 0,
+        serviceMins: 0,
+        reactMins: 0,
+        globalMins: 0,
+        reactCount: 0,
+        completedCount: 0,
+      };
     }
     for (const req of filteredRequests) {
-      if (req.mover && req.mover !== 'sin asignar' && req.mover !== 'Sin asignar') {
-        const moverKey = req.mover.toLowerCase().trim()
+      if (
+        req.mover &&
+        req.mover !== "sin asignar" &&
+        req.mover !== "Sin asignar"
+      ) {
+        const moverKey = req.mover.toLowerCase().trim();
         if (!map[moverKey]) {
-          map[moverKey] = { count: 0, serviceMins: 0, reactMins: 0, globalMins: 0, reactCount: 0, completedCount: 0 }
+          map[moverKey] = {
+            count: 0,
+            serviceMins: 0,
+            reactMins: 0,
+            globalMins: 0,
+            reactCount: 0,
+            completedCount: 0,
+          };
         }
-        const reactDur = calculateDurationMinutes(req.timestamp, req.assignmentTime || (req.status === 'REALIZADO' ? req.movementTime : null))
+        const reactDur = calculateDurationMinutes(
+          req.timestamp,
+          req.assignmentTime ||
+            (req.status === "REALIZADO" ? req.movementTime : null),
+        );
         if (reactDur !== null) {
-          map[moverKey].reactMins += reactDur
-          map[moverKey].reactCount += 1
+          map[moverKey].reactMins += reactDur;
+          map[moverKey].reactCount += 1;
         }
-        map[moverKey].count += 1
-        if (req.status === 'REALIZADO') {
-          map[moverKey].completedCount += 1
-          const servDur = calculateDurationMinutes(req.assignmentTime || req.timestamp, req.movementTime)
-          if (servDur !== null) map[moverKey].serviceMins += servDur
-          const gDur = calculateDurationMinutes(req.timestamp, req.movementTime)
-          if (gDur !== null) map[moverKey].globalMins += gDur
+        map[moverKey].count += 1;
+        if (req.status === "REALIZADO") {
+          map[moverKey].completedCount += 1;
+          const servDur = calculateDurationMinutes(
+            req.assignmentTime || req.timestamp,
+            req.movementTime,
+          );
+          if (servDur !== null) map[moverKey].serviceMins += servDur;
+          const gDur = calculateDurationMinutes(
+            req.timestamp,
+            req.movementTime,
+          );
+          if (gDur !== null) map[moverKey].globalMins += gDur;
         }
       }
     }
-    const total = Object.values(map).reduce((acc, curr) => acc + curr.count, 0)
+    const total = Object.values(map).reduce((acc, curr) => acc + curr.count, 0);
     const list = Object.entries(map).map(([name, data]) => {
-      const pct = total > 0 ? ((data.count / total) * 100).toFixed(1) : '0.0'
-      const avgService = data.completedCount > 0 ? Math.round(data.serviceMins / data.completedCount) : 0
-      const avgReact = data.reactCount > 0 ? Math.round(data.reactMins / data.reactCount) : 0
-      const avgGlobal = data.completedCount > 0 ? Math.round(data.globalMins / data.completedCount) : 0
+      const pct = total > 0 ? ((data.count / total) * 100).toFixed(1) : "0.0";
+      const avgService =
+        data.completedCount > 0
+          ? Math.round(data.serviceMins / data.completedCount)
+          : 0;
+      const avgReact =
+        data.reactCount > 0 ? Math.round(data.reactMins / data.reactCount) : 0;
+      const avgGlobal =
+        data.completedCount > 0
+          ? Math.round(data.globalMins / data.completedCount)
+          : 0;
       return {
         name: name.charAt(0).toUpperCase() + name.slice(1),
         count: data.count,
@@ -2295,17 +3301,19 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
         avgService,
         avgReact,
         avgGlobal,
-      }
-    })
-    return list.filter((item) => item.count > 0).sort((a, b) => b.count - a.count)
-  }, [filteredRequests])
+      };
+    });
+    return list
+      .filter((item) => item.count > 0)
+      .sort((a, b) => b.count - a.count);
+  }, [filteredRequests]);
 
   // Gráfico por Servicios con Oportunidad Global, Servicio y Reacción
   const serviceStats = useMemo(() => {
-    const map = {}
+    const map = {};
     for (const req of filteredRequests) {
       if (req.service) {
-        const sName = req.service.trim()
+        const sName = req.service.trim();
         if (!map[sName]) {
           map[sName] = {
             count: 0,
@@ -2314,29 +3322,46 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
             serviceMins: 0,
             reactMins: 0,
             reactCount: 0,
-          }
+          };
         }
-        map[sName].count += 1
-        const reactDur = calculateDurationMinutes(req.timestamp, req.assignmentTime || (req.status === 'REALIZADO' ? req.movementTime : null))
+        map[sName].count += 1;
+        const reactDur = calculateDurationMinutes(
+          req.timestamp,
+          req.assignmentTime ||
+            (req.status === "REALIZADO" ? req.movementTime : null),
+        );
         if (reactDur !== null) {
-          map[sName].reactMins += reactDur
-          map[sName].reactCount += 1
+          map[sName].reactMins += reactDur;
+          map[sName].reactCount += 1;
         }
-        if (req.status === 'REALIZADO') {
-          map[sName].completedCount += 1
-          const gDur = calculateDurationMinutes(req.timestamp, req.movementTime)
-          if (gDur !== null) map[sName].globalMins += gDur
-          const sDur = calculateDurationMinutes(req.assignmentTime || req.timestamp, req.movementTime)
-          if (sDur !== null) map[sName].serviceMins += sDur
+        if (req.status === "REALIZADO") {
+          map[sName].completedCount += 1;
+          const gDur = calculateDurationMinutes(
+            req.timestamp,
+            req.movementTime,
+          );
+          if (gDur !== null) map[sName].globalMins += gDur;
+          const sDur = calculateDurationMinutes(
+            req.assignmentTime || req.timestamp,
+            req.movementTime,
+          );
+          if (sDur !== null) map[sName].serviceMins += sDur;
         }
       }
     }
-    const total = Object.values(map).reduce((acc, curr) => acc + curr.count, 0)
+    const total = Object.values(map).reduce((acc, curr) => acc + curr.count, 0);
     const list = Object.entries(map).map(([name, data]) => {
-      const pct = total > 0 ? ((data.count / total) * 100).toFixed(1) : '0.0'
-      const avgGlobal = data.completedCount > 0 ? Math.round(data.globalMins / data.completedCount) : 0
-      const avgService = data.completedCount > 0 ? Math.round(data.serviceMins / data.completedCount) : 0
-      const avgReact = data.reactCount > 0 ? Math.round(data.reactMins / data.reactCount) : 0
+      const pct = total > 0 ? ((data.count / total) * 100).toFixed(1) : "0.0";
+      const avgGlobal =
+        data.completedCount > 0
+          ? Math.round(data.globalMins / data.completedCount)
+          : 0;
+      const avgService =
+        data.completedCount > 0
+          ? Math.round(data.serviceMins / data.completedCount)
+          : 0;
+      const avgReact =
+        data.reactCount > 0 ? Math.round(data.reactMins / data.reactCount) : 0;
       return {
         name,
         count: data.count,
@@ -2344,112 +3369,182 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
         avgGlobal,
         avgService,
         avgReact,
-      }
-    })
-    return list.sort((a, b) => b.count - a.count)
-  }, [filteredRequests])
+      };
+    });
+    return list.sort((a, b) => b.count - a.count);
+  }, [filteredRequests]);
 
   const handleExportExcel = () => {
     if (!filteredRequests.length) {
-      alert('No hay solicitudes filtradas para exportar.')
-      return
+      alert("No hay solicitudes filtradas para exportar.");
+      return;
     }
 
     const rows = filteredRequests.map((req) => {
-      const isCompleted = req.status === 'REALIZADO'
-      const serviceDur = isCompleted ? calculateDurationMinutes(req.assignmentTime || req.timestamp, req.movementTime) : null
-      const reactDur = calculateDurationMinutes(req.timestamp, req.assignmentTime || (isCompleted ? req.movementTime : null))
-      const totalDur = isCompleted ? calculateDurationMinutes(req.timestamp, req.movementTime) : null
+      const isCompleted = req.status === "REALIZADO";
+      const serviceDur = isCompleted
+        ? calculateDurationMinutes(
+            req.assignmentTime || req.timestamp,
+            req.movementTime,
+          )
+        : null;
+      const reactDur = calculateDurationMinutes(
+        req.timestamp,
+        req.assignmentTime || (isCompleted ? req.movementTime : null),
+      );
+      const totalDur = isCompleted
+        ? calculateDurationMinutes(req.timestamp, req.movementTime)
+        : null;
 
       return {
-        'ID Único': req.requestId || 'TR-1000',
-        'Registro': req.record || '',
-        'Paciente': req.patient || '',
-        'Prioridad': (req.priority || 'media').toUpperCase(),
-        'Servicio Solicitante': req.service || '',
-        'Ubicación Específica': req.location || '',
-        'Destino': req.destination || '',
-        'Camillero Asignado': req.mover || 'sin asignar',
-        'Medio de Transporte': req.transport || '',
-        'Soporte O2': req.oxygen || '',
-        'Fecha y Hora Solicitud': req.timestamp || '',
-        'Hora Asignado': req.assignmentTime || 'Pendiente',
-        'Hora Realización': isCompleted ? (req.movementTime || '') : 'Pendiente',
-        'Oportunidad de Servicio': isCompleted && serviceDur !== null ? formatDuration(serviceDur) : '—',
-        'Oportunidad de Traslado': reactDur !== null ? formatDuration(reactDur) : '—',
-        'Oportunidad Global': isCompleted && totalDur !== null ? formatDuration(totalDur) : '—',
-        'Estado': isCompleted ? 'REALIZADO' : req.status || 'PENDIENTE',
-        'Observación Solicitud': req.observation || '',
-        'Observación Camilleros': req.centralObservation || '',
-      }
-    })
+        "ID Único": req.requestId || "TR-1000",
+        Registro: req.record || "",
+        Paciente: req.patient || "",
+        Prioridad: (req.priority || "media").toUpperCase(),
+        "Servicio Solicitante": req.service || "",
+        "Ubicación Específica": req.location || "",
+        Destino: req.destination || "",
+        "Camillero Asignado": req.mover || "sin asignar",
+        "Medio de Transporte": req.transport || "",
+        "Soporte O2": req.oxygen || "",
+        "Fecha y Hora Solicitud": req.timestamp || "",
+        "Hora Asignado": req.assignmentTime || "Pendiente",
+        "Hora Realización": isCompleted ? req.movementTime || "" : "Pendiente",
+        "Oportunidad de Servicio":
+          isCompleted && serviceDur !== null ? formatDuration(serviceDur) : "—",
+        "Oportunidad de Traslado":
+          reactDur !== null ? formatDuration(reactDur) : "—",
+        "Oportunidad Global":
+          isCompleted && totalDur !== null ? formatDuration(totalDur) : "—",
+        Estado: isCompleted ? "REALIZADO" : req.status || "PENDIENTE",
+        "Observación Solicitud": req.observation || "",
+        "Observación Camilleros": req.centralObservation || "",
+      };
+    });
 
-    const worksheet = XLSX.utils.json_to_sheet(rows)
-    worksheet['!cols'] = [
-      { wch: 12 }, { wch: 14 }, { wch: 26 }, { wch: 24 }, { wch: 22 },
-      { wch: 22 }, { wch: 22 }, { wch: 18 }, { wch: 12 }, { wch: 24 },
-      { wch: 24 }, { wch: 24 }, { wch: 24 }, { wch: 24 }, { wch: 20 },
-      { wch: 15 }, { wch: 28 }, { wch: 28 }
-    ]
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    worksheet["!cols"] = [
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 26 },
+      { wch: 24 },
+      { wch: 22 },
+      { wch: 22 },
+      { wch: 22 },
+      { wch: 18 },
+      { wch: 12 },
+      { wch: 24 },
+      { wch: 24 },
+      { wch: 24 },
+      { wch: 24 },
+      { wch: 24 },
+      { wch: 20 },
+      { wch: 15 },
+      { wch: 28 },
+      { wch: 28 },
+    ];
 
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Traslados CNC')
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Traslados CNC");
 
-    const dateStr = new Date().toISOString().slice(0, 10)
-    XLSX.writeFile(workbook, `Indicadores_Traslados_CNC_${dateStr}.xlsx`)
-  }
+    const dateStr = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(workbook, `Indicadores_Traslados_CNC_${dateStr}.xlsx`);
+  };
 
   if (!isAuthenticated) {
     return (
-      <section className="dashboard-page analytics-page auth-overlay-section" style={{ minHeight: '82vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-        <div className="auth-card" style={{
-          background: 'rgba(255, 255, 255, 0.98)',
-          backdropFilter: 'blur(16px)',
-          borderRadius: '24px',
-          padding: '44px 32px',
-          maxWidth: '440px',
-          width: '100%',
-          boxShadow: '0 25px 60px rgba(48, 44, 107, 0.25), 0 0 0 1px rgba(48, 44, 107, 0.08)',
-          textAlign: 'center',
-          animation: 'fadeIn 0.3s ease-out'
-        }}>
-          <div style={{ marginBottom: '24px' }}>
-            <img src="/logooo-Photoroom.png" alt="Clínica Nueva de Cali" style={{ maxHeight: '72px', objectFit: 'contain' }} />
+      <section
+        className="dashboard-page analytics-page auth-overlay-section"
+        style={{
+          minHeight: "82vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "24px",
+        }}
+      >
+        <div
+          className="auth-card"
+          style={{
+            background: "rgba(255, 255, 255, 0.98)",
+            backdropFilter: "blur(16px)",
+            borderRadius: "24px",
+            padding: "44px 32px",
+            maxWidth: "440px",
+            width: "100%",
+            boxShadow:
+              "0 25px 60px rgba(48, 44, 107, 0.25), 0 0 0 1px rgba(48, 44, 107, 0.08)",
+            textAlign: "center",
+            animation: "fadeIn 0.3s ease-out",
+          }}
+        >
+          <div style={{ marginBottom: "24px" }}>
+            <img
+              src="/logooo-Photoroom.png"
+              alt="Clínica Nueva de Cali"
+              style={{ maxHeight: "72px", objectFit: "contain" }}
+            />
           </div>
 
-          <h2 style={{ fontSize: '1.45rem', fontWeight: 800, color: '#302c6b', margin: '0 0 8px' }}>
+          <h2
+            style={{
+              fontSize: "1.45rem",
+              fontWeight: 800,
+              color: "#302c6b",
+              margin: "0 0 8px",
+            }}
+          >
             Acceso a Indicadores
           </h2>
-          <p style={{ fontSize: '0.95rem', color: '#64748b', margin: '0 0 24px', lineHeight: 1.5 }}>
+          <p
+            style={{
+              fontSize: "0.95rem",
+              color: "#64748b",
+              margin: "0 0 24px",
+              lineHeight: 1.5,
+            }}
+          >
             Ingresa la contraseña para ver el contenido
           </p>
 
           <form onSubmit={handlePasswordSubmit}>
-            <div style={{ marginBottom: '18px', textAlign: 'left' }}>
+            <div style={{ marginBottom: "18px", textAlign: "left" }}>
               <input
                 type="password"
                 value={passwordInput}
                 onChange={(e) => {
-                  setPasswordInput(e.target.value)
-                  if (passwordError) setPasswordError('')
+                  setPasswordInput(e.target.value);
+                  if (passwordError) setPasswordError("");
                 }}
                 placeholder="Ingresa la contraseña..."
                 autoFocus
                 style={{
-                  width: '100%',
-                  padding: '14px 18px',
-                  fontSize: '1.05rem',
-                  borderRadius: '12px',
-                  border: passwordError ? '2px solid #ef4444' : '2px solid #cbd5e1',
-                  outline: 'none',
-                  transition: 'all 0.2s ease',
-                  background: '#f8fafc',
-                  color: '#1e293b',
-                  boxSizing: 'border-box'
+                  width: "100%",
+                  padding: "14px 18px",
+                  fontSize: "1.05rem",
+                  borderRadius: "12px",
+                  border: passwordError
+                    ? "2px solid #ef4444"
+                    : "2px solid #cbd5e1",
+                  outline: "none",
+                  transition: "all 0.2s ease",
+                  background: "#f8fafc",
+                  color: "#1e293b",
+                  boxSizing: "border-box",
                 }}
               />
               {passwordError && (
-                <div style={{ color: '#ef4444', fontSize: '0.86rem', fontWeight: 600, marginTop: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div
+                  style={{
+                    color: "#ef4444",
+                    fontSize: "0.86rem",
+                    fontWeight: 600,
+                    marginTop: "8px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                >
                   <span>⚠️</span> {passwordError}
                 </div>
               )}
@@ -2459,35 +3554,35 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
               type="submit"
               className="submit-button"
               style={{
-                width: '100%',
-                padding: '14px',
-                fontSize: '1rem',
+                width: "100%",
+                padding: "14px",
+                fontSize: "1rem",
                 fontWeight: 700,
-                borderRadius: '12px',
-                cursor: 'pointer',
-                background: 'linear-gradient(135deg, #302c6b, #00aaa9)',
-                color: '#ffffff',
-                border: 'none',
-                boxShadow: '0 8px 20px rgba(48, 44, 107, 0.25)',
-                transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+                borderRadius: "12px",
+                cursor: "pointer",
+                background: "linear-gradient(135deg, #302c6b, #00aaa9)",
+                color: "#ffffff",
+                border: "none",
+                boxShadow: "0 8px 20px rgba(48, 44, 107, 0.25)",
+                transition: "transform 0.15s ease, box-shadow 0.15s ease",
               }}
             >
               Ingresar al Tablero
             </button>
           </form>
 
-          <div style={{ marginTop: '22px' }}>
+          <div style={{ marginTop: "22px" }}>
             <button
               type="button"
-              onClick={() => onNavigate && onNavigate('dashboard')}
+              onClick={() => onNavigate && onNavigate("dashboard")}
               style={{
-                background: 'none',
-                border: 'none',
-                color: '#64748b',
-                fontSize: '0.88rem',
-                cursor: 'pointer',
-                textDecoration: 'underline',
-                padding: '4px'
+                background: "none",
+                border: "none",
+                color: "#64748b",
+                fontSize: "0.88rem",
+                cursor: "pointer",
+                textDecoration: "underline",
+                padding: "4px",
               }}
             >
               ← Volver a Central de Camilleros
@@ -2495,21 +3590,29 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
           </div>
         </div>
       </section>
-    )
+    );
   }
 
   return (
-    <section className="dashboard-page analytics-page" aria-labelledby="analytics-title">
+    <section
+      className="dashboard-page analytics-page"
+      aria-labelledby="analytics-title"
+    >
       <header className="dashboard-hero-banner">
         <div className="banner-text">
           <p className="eyebrow">INDICADORES Y TIEMPOS DE TRASLADO</p>
           <h1 id="analytics-title">Estadísticas de Traslados</h1>
           <p className="dashboard-subtitle">
-            Monitoreo de tiempos de atención, reacción de camilleros y gestión de traslados.
+            Monitoreo de tiempos de atención, reacción de camilleros y gestión
+            de traslados.
           </p>
         </div>
         <div className="banner-right">
-          <img className="banner-logo" src="/logooo-Photoroom.png" alt="Clínica Nueva de Cali" />
+          <img
+            className="banner-logo"
+            src="/logooo-Photoroom.png"
+            alt="Clínica Nueva de Cali"
+          />
         </div>
       </header>
 
@@ -2517,16 +3620,33 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
       <div className="analytics-unified-toolbar">
         <div className="toolbar-actions-row">
           <div className="analytics-nav-buttons-group">
-            <button type="button" className="analytics-link-btn" onClick={() => onNavigate && onNavigate('dashboard')}>
+            <button
+              type="button"
+              className="analytics-link-btn"
+              onClick={() => onNavigate && onNavigate("dashboard")}
+            >
               Central de camilleros
             </button>
-            <button type="button" className="analytics-link-btn" onClick={() => onNavigate && onNavigate('history')}>
+            <button
+              type="button"
+              className="analytics-link-btn"
+              onClick={() => onNavigate && onNavigate("history")}
+            >
               Historial de traslados
             </button>
-            <button type="button" className="analytics-link-btn camilleros-manage-btn" onClick={() => setShowCamillerosModal(true)}>
+            <button
+              type="button"
+              className="analytics-link-btn camilleros-manage-btn"
+              onClick={() => setShowCamillerosModal(true)}
+            >
               Gestión de Camilleros
             </button>
-            <button type="button" className="analytics-link-btn excel-export-btn" onClick={handleExportExcel} title="Exportar solicitudes filtradas a Excel (.xlsx)">
+            <button
+              type="button"
+              className="analytics-link-btn excel-export-btn"
+              onClick={handleExportExcel}
+              title="Exportar solicitudes filtradas a Excel (.xlsx)"
+            >
               Exportar a Excel
             </button>
             <button
@@ -2535,13 +3655,15 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
               onClick={triggerRefresh}
               title="Actualizar datos y estadísticas desde la nube"
             >
-              <span className="refresh-icon" aria-hidden="true">↻</span>
+              <span className="refresh-icon" aria-hidden="true">
+                ↻
+              </span>
               <span>
-                {refreshState === 'refreshing'
-                  ? 'Actualizando...'
-                  : refreshState === 'success'
-                  ? '¡Actualizado!'
-                  : 'Actualizar'}
+                {refreshState === "refreshing"
+                  ? "Actualizando..."
+                  : refreshState === "success"
+                    ? "¡Actualizado!"
+                    : "Actualizar"}
               </span>
             </button>
           </div>
@@ -2566,7 +3688,10 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
 
           <label className="compact-filter-item">
             <span>Estado</span>
-            <select value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)}>
+            <select
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
+            >
               <option value="TODOS">Todos</option>
               <option value="REALIZADO">Realizados</option>
               <option value="PENDIENTE">Pendientes</option>
@@ -2576,27 +3701,40 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
 
           <label className="compact-filter-item">
             <span>Servicio</span>
-            <select value={selectedService} onChange={(e) => setSelectedService(e.target.value)}>
+            <select
+              value={selectedService}
+              onChange={(e) => setSelectedService(e.target.value)}
+            >
               <option value="TODOS">Todos</option>
               {availableServices.map((s) => (
-                <option key={s} value={s}>{s}</option>
+                <option key={s} value={s}>
+                  {s}
+                </option>
               ))}
             </select>
           </label>
 
           <label className="compact-filter-item">
             <span>Camillero</span>
-            <select value={selectedMover} onChange={(e) => setSelectedMover(e.target.value)}>
+            <select
+              value={selectedMover}
+              onChange={(e) => setSelectedMover(e.target.value)}
+            >
               <option value="TODOS">Todos</option>
               {availableMovers.map((m) => (
-                <option key={m} value={m}>{m}</option>
+                <option key={m} value={m}>
+                  {m}
+                </option>
               ))}
             </select>
           </label>
 
           <label className="compact-filter-item">
             <span>Prioridad</span>
-            <select value={selectedPriority} onChange={(e) => setSelectedPriority(e.target.value)}>
+            <select
+              value={selectedPriority}
+              onChange={(e) => setSelectedPriority(e.target.value)}
+            >
               <option value="TODOS">Todos</option>
               <option value="alta">Alta</option>
               <option value="media">Media</option>
@@ -2606,7 +3744,10 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
 
           <label className="compact-filter-item">
             <span>Transporte</span>
-            <select value={selectedTransport} onChange={(e) => setSelectedTransport(e.target.value)}>
+            <select
+              value={selectedTransport}
+              onChange={(e) => setSelectedTransport(e.target.value)}
+            >
               <option value="TODOS">Todos</option>
               <option value="silla de ruedas">Silla de ruedas</option>
               <option value="cama">Cama</option>
@@ -2616,7 +3757,10 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
 
           <label className="compact-filter-item">
             <span>Soporte O2</span>
-            <select value={selectedOxygen} onChange={(e) => setSelectedOxygen(e.target.value)}>
+            <select
+              value={selectedOxygen}
+              onChange={(e) => setSelectedOxygen(e.target.value)}
+            >
               <option value="TODOS">Todos</option>
               <option value="si">Con O2</option>
               <option value="no">Sin O2</option>
@@ -2629,8 +3773,16 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
             onClick={triggerRefresh}
             title="Actualizar datos"
           >
-            <span className="refresh-icon" aria-hidden="true">↻</span>
-            <span>{refreshState === 'refreshing' ? 'Actualizando...' : refreshState === 'success' ? '¡Listo!' : 'Actualizar'}</span>
+            <span className="refresh-icon" aria-hidden="true">
+              ↻
+            </span>
+            <span>
+              {refreshState === "refreshing"
+                ? "Actualizando..."
+                : refreshState === "success"
+                  ? "¡Listo!"
+                  : "Actualizar"}
+            </span>
           </button>
         </div>
       </div>
@@ -2641,26 +3793,50 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
         <div className="summary-cards-grid">
           <div className="summary-gradient-card card-indigo">
             <div className="summary-card-content">
-              <span className="summary-card-title">Promedio Oportunidad de Servicio:</span>
-              <strong className="summary-card-metric">{formatDuration(totalServiceMinutes)}</strong>
+              <span className="summary-card-title">
+                Promedio Oportunidad de Servicio:
+              </span>
+              <strong className="summary-card-metric">
+                {formatDuration(totalServiceMinutes)}
+              </strong>
             </div>
-            <img className="summary-card-img-icon" src="/cronometro.png" alt="Oportunidad de Servicio" />
+            <img
+              className="summary-card-img-icon"
+              src="/cronometro.png"
+              alt="Oportunidad de Servicio"
+            />
           </div>
 
           <div className="summary-gradient-card card-blue">
             <div className="summary-card-content">
-              <span className="summary-card-title">Promedio Oportunidad de Traslado:</span>
-              <strong className="summary-card-metric">{formatDuration(totalReactionMinutes)}</strong>
+              <span className="summary-card-title">
+                Promedio Oportunidad de Traslado:
+              </span>
+              <strong className="summary-card-metric">
+                {formatDuration(totalReactionMinutes)}
+              </strong>
             </div>
-            <img className="summary-card-img-icon" src="/reloj.png" alt="Oportunidad de Traslado" />
+            <img
+              className="summary-card-img-icon"
+              src="/reloj.png"
+              alt="Oportunidad de Traslado"
+            />
           </div>
 
           <div className="summary-gradient-card card-cyan">
             <div className="summary-card-content">
-              <span className="summary-card-title">Promedio Oportunidad Global:</span>
-              <strong className="summary-card-metric">{formatDuration(totalDurationMinutes)}</strong>
+              <span className="summary-card-title">
+                Promedio Oportunidad Global:
+              </span>
+              <strong className="summary-card-metric">
+                {formatDuration(totalDurationMinutes)}
+              </strong>
             </div>
-            <img className="summary-card-img-icon" src="/cronometro.png" alt="Oportunidad Global" />
+            <img
+              className="summary-card-img-icon"
+              src="/cronometro.png"
+              alt="Oportunidad Global"
+            />
           </div>
 
           <div className="summary-gradient-card card-teal">
@@ -2668,7 +3844,11 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
               <span className="summary-card-title">Traslados Realizados:</span>
               <strong className="summary-card-metric">{totalCompleted}</strong>
             </div>
-            <img className="summary-card-img-icon" src="/camilla-medica.png" alt="Traslados Realizados" />
+            <img
+              className="summary-card-img-icon"
+              src="/camilla-medica.png"
+              alt="Traslados Realizados"
+            />
           </div>
 
           <div className="summary-gradient-card card-amber">
@@ -2676,23 +3856,41 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
               <span className="summary-card-title">Traslados Pendientes:</span>
               <strong className="summary-card-metric">{totalPending}</strong>
             </div>
-            <img className="summary-card-img-icon" src="/camilla-medica.png" alt="Traslados Pendientes" />
+            <img
+              className="summary-card-img-icon"
+              src="/camilla-medica.png"
+              alt="Traslados Pendientes"
+            />
           </div>
 
           <div className="summary-gradient-card card-rose">
             <div className="summary-card-content">
-              <span className="summary-card-title">Traslados No Realizados:</span>
-              <strong className="summary-card-metric">{totalNotRealized}</strong>
+              <span className="summary-card-title">
+                Traslados No Realizados:
+              </span>
+              <strong className="summary-card-metric">
+                {totalNotRealized}
+              </strong>
             </div>
-            <img className="summary-card-img-icon" src="/camilla-medica.png" alt="Traslados No Realizados" />
+            <img
+              className="summary-card-img-icon"
+              src="/camilla-medica.png"
+              alt="Traslados No Realizados"
+            />
           </div>
 
           <div className="summary-gradient-card card-emerald">
             <div className="summary-card-content">
               <span className="summary-card-title">Camilleros Activos:</span>
-              <strong className="summary-card-metric">{(camilleros || []).length}</strong>
+              <strong className="summary-card-metric">
+                {(camilleros || []).length}
+              </strong>
             </div>
-            <img className="summary-card-img-icon" src="/paramedico.png" alt="Camilleros Activos" />
+            <img
+              className="summary-card-img-icon"
+              src="/paramedico.png"
+              alt="Camilleros Activos"
+            />
           </div>
         </div>
       </div>
@@ -2714,19 +3912,24 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
                     <strong>#{idx + 1}</strong> {item.name}
                   </span>
                   <span className="stat-item-count">
-                    {item.count} traslados ({item.pct}%) {item.avgGlobal > 0 ? `· ${item.avgGlobal} min prom` : ''}
+                    {item.count} traslados ({item.pct}%){" "}
+                    {item.avgGlobal > 0 ? `· ${item.avgGlobal} min prom` : ""}
                   </span>
                 </div>
                 <div className="stat-bar-track">
                   <div
                     className="stat-bar-fill-gradient fill-cyan"
-                    style={{ width: `${Math.max(Number(item.pct), item.count > 0 ? 10 : 0)}%` }}
+                    style={{
+                      width: `${Math.max(Number(item.pct), item.count > 0 ? 10 : 0)}%`,
+                    }}
                   />
                 </div>
               </div>
             ))}
             {!serviceStats.length && (
-              <div className="empty-state-mini">No hay traslados en los servicios con estos filtros.</div>
+              <div className="empty-state-mini">
+                No hay traslados en los servicios con estos filtros.
+              </div>
             )}
           </div>
         </div>
@@ -2746,19 +3949,24 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
                     <strong>#{idx + 1}</strong> {item.name}
                   </span>
                   <span className="stat-item-count">
-                    {item.count} traslados ({item.pct}%) {item.avgService > 0 ? `· ${item.avgService} min prom` : ''}
+                    {item.count} traslados ({item.pct}%){" "}
+                    {item.avgService > 0 ? `· ${item.avgService} min prom` : ""}
                   </span>
                 </div>
                 <div className="stat-bar-track">
                   <div
                     className="stat-bar-fill-gradient fill-purple"
-                    style={{ width: `${Math.max(Number(item.pct), item.count > 0 ? 10 : 0)}%` }}
+                    style={{
+                      width: `${Math.max(Number(item.pct), item.count > 0 ? 10 : 0)}%`,
+                    }}
                   />
                 </div>
               </div>
             ))}
             {!camilleroStats.length && (
-              <div className="empty-state-mini">No hay datos de camilleros registrados.</div>
+              <div className="empty-state-mini">
+                No hay datos de camilleros registrados.
+              </div>
             )}
           </div>
         </div>
@@ -2774,13 +3982,21 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
             title={`Prioridad ALTA\n• Promedio realización: ${priorityStats.alta.avgService} min\n• Promedio toma en central: ${priorityStats.alta.avgReact} min\n• Promedio Global: ${priorityStats.alta.avgGlobal} min\n• Traslados: ${priorityStats.alta.count} (${priorityStats.alta.pct}%)`}
           >
             <div className="stat-bar-label-row">
-              <span className="stat-item-name" style={{ color: '#dc2626' }}>● ALTA</span>
+              <span className="stat-item-name" style={{ color: "#dc2626" }}>
+                ● ALTA
+              </span>
               <span className="stat-item-count">
-                {priorityStats.alta.count} traslados ({priorityStats.alta.pct}%) {priorityStats.alta.avgGlobal > 0 ? `· ${priorityStats.alta.avgGlobal} min` : ''}
+                {priorityStats.alta.count} traslados ({priorityStats.alta.pct}%){" "}
+                {priorityStats.alta.avgGlobal > 0
+                  ? `· ${priorityStats.alta.avgGlobal} min`
+                  : ""}
               </span>
             </div>
             <div className="stat-bar-track">
-              <div className="stat-bar-fill-gradient fill-red" style={{ width: `${priorityStats.alta.pct}%` }} />
+              <div
+                className="stat-bar-fill-gradient fill-red"
+                style={{ width: `${priorityStats.alta.pct}%` }}
+              />
             </div>
           </div>
 
@@ -2789,13 +4005,22 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
             title={`Prioridad MEDIA\n• Promedio realización: ${priorityStats.media.avgService} min\n• Promedio toma en central: ${priorityStats.media.avgReact} min\n• Promedio Global: ${priorityStats.media.avgGlobal} min\n• Traslados: ${priorityStats.media.count} (${priorityStats.media.pct}%)`}
           >
             <div className="stat-bar-label-row">
-              <span className="stat-item-name" style={{ color: '#d97706' }}>● MEDIA</span>
+              <span className="stat-item-name" style={{ color: "#d97706" }}>
+                ● MEDIA
+              </span>
               <span className="stat-item-count">
-                {priorityStats.media.count} traslados ({priorityStats.media.pct}%) {priorityStats.media.avgGlobal > 0 ? `· ${priorityStats.media.avgGlobal} min` : ''}
+                {priorityStats.media.count} traslados ({priorityStats.media.pct}
+                %){" "}
+                {priorityStats.media.avgGlobal > 0
+                  ? `· ${priorityStats.media.avgGlobal} min`
+                  : ""}
               </span>
             </div>
             <div className="stat-bar-track">
-              <div className="stat-bar-fill-gradient fill-orange" style={{ width: `${priorityStats.media.pct}%` }} />
+              <div
+                className="stat-bar-fill-gradient fill-orange"
+                style={{ width: `${priorityStats.media.pct}%` }}
+              />
             </div>
           </div>
 
@@ -2804,13 +4029,21 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
             title={`Prioridad BAJA\n• Promedio realización: ${priorityStats.baja.avgService} min\n• Promedio toma en central: ${priorityStats.baja.avgReact} min\n• Promedio Global: ${priorityStats.baja.avgGlobal} min\n• Traslados: ${priorityStats.baja.count} (${priorityStats.baja.pct}%)`}
           >
             <div className="stat-bar-label-row">
-              <span className="stat-item-name" style={{ color: '#059669' }}>● BAJA</span>
+              <span className="stat-item-name" style={{ color: "#059669" }}>
+                ● BAJA
+              </span>
               <span className="stat-item-count">
-                {priorityStats.baja.count} traslados ({priorityStats.baja.pct}%) {priorityStats.baja.avgGlobal > 0 ? `· ${priorityStats.baja.avgGlobal} min` : ''}
+                {priorityStats.baja.count} traslados ({priorityStats.baja.pct}%){" "}
+                {priorityStats.baja.avgGlobal > 0
+                  ? `· ${priorityStats.baja.avgGlobal} min`
+                  : ""}
               </span>
             </div>
             <div className="stat-bar-track">
-              <div className="stat-bar-fill-gradient fill-green" style={{ width: `${priorityStats.baja.pct}%` }} />
+              <div
+                className="stat-bar-fill-gradient fill-green"
+                style={{ width: `${priorityStats.baja.pct}%` }}
+              />
             </div>
           </div>
         </div>
@@ -2824,10 +4057,15 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
           >
             <div className="stat-bar-label-row">
               <span className="stat-item-name">Con Soporte de O2</span>
-              <span className="stat-item-count">{o2Stats.withO2.count} traslados ({o2Stats.withO2.pct}%)</span>
+              <span className="stat-item-count">
+                {o2Stats.withO2.count} traslados ({o2Stats.withO2.pct}%)
+              </span>
             </div>
             <div className="stat-bar-track">
-              <div className="stat-bar-fill-gradient fill-teal" style={{ width: `${o2Stats.withO2.pct}%` }} />
+              <div
+                className="stat-bar-fill-gradient fill-teal"
+                style={{ width: `${o2Stats.withO2.pct}%` }}
+              />
             </div>
           </div>
 
@@ -2837,10 +4075,15 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
           >
             <div className="stat-bar-label-row">
               <span className="stat-item-name">Sin Soporte de O2</span>
-              <span className="stat-item-count">{o2Stats.withoutO2.count} traslados ({o2Stats.withoutO2.pct}%)</span>
+              <span className="stat-item-count">
+                {o2Stats.withoutO2.count} traslados ({o2Stats.withoutO2.pct}%)
+              </span>
             </div>
             <div className="stat-bar-track">
-              <div className="stat-bar-fill-gradient fill-navy" style={{ width: `${o2Stats.withoutO2.pct}%` }} />
+              <div
+                className="stat-bar-fill-gradient fill-navy"
+                style={{ width: `${o2Stats.withoutO2.pct}%` }}
+              />
             </div>
           </div>
         </div>
@@ -2855,11 +4098,18 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
             <div className="stat-bar-label-row">
               <span className="stat-item-name">Silla de Ruedas</span>
               <span className="stat-item-count">
-                {transportStats.wheelchair.count} traslados ({transportStats.wheelchair.pct}%) {transportStats.wheelchair.avgService > 0 ? `· ${transportStats.wheelchair.avgService} min prom` : ''}
+                {transportStats.wheelchair.count} traslados (
+                {transportStats.wheelchair.pct}%){" "}
+                {transportStats.wheelchair.avgService > 0
+                  ? `· ${transportStats.wheelchair.avgService} min prom`
+                  : ""}
               </span>
             </div>
             <div className="stat-bar-track">
-              <div className="stat-bar-fill-gradient fill-navy" style={{ width: `${transportStats.wheelchair.pct}%` }} />
+              <div
+                className="stat-bar-fill-gradient fill-navy"
+                style={{ width: `${transportStats.wheelchair.pct}%` }}
+              />
             </div>
           </div>
 
@@ -2870,11 +4120,17 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
             <div className="stat-bar-label-row">
               <span className="stat-item-name">Cama</span>
               <span className="stat-item-count">
-                {transportStats.bed.count} traslados ({transportStats.bed.pct}%) {transportStats.bed.avgService > 0 ? `· ${transportStats.bed.avgService} min prom` : ''}
+                {transportStats.bed.count} traslados ({transportStats.bed.pct}%){" "}
+                {transportStats.bed.avgService > 0
+                  ? `· ${transportStats.bed.avgService} min prom`
+                  : ""}
               </span>
             </div>
             <div className="stat-bar-track">
-              <div className="stat-bar-fill-gradient fill-teal" style={{ width: `${transportStats.bed.pct}%` }} />
+              <div
+                className="stat-bar-fill-gradient fill-teal"
+                style={{ width: `${transportStats.bed.pct}%` }}
+              />
             </div>
           </div>
 
@@ -2885,11 +4141,18 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
             <div className="stat-bar-label-row">
               <span className="stat-item-name">Camilla Ambulancia</span>
               <span className="stat-item-count">
-                {transportStats.ambulance.count} traslados ({transportStats.ambulance.pct}%) {transportStats.ambulance.avgService > 0 ? `· ${transportStats.ambulance.avgService} min prom` : ''}
+                {transportStats.ambulance.count} traslados (
+                {transportStats.ambulance.pct}%){" "}
+                {transportStats.ambulance.avgService > 0
+                  ? `· ${transportStats.ambulance.avgService} min prom`
+                  : ""}
               </span>
             </div>
             <div className="stat-bar-track">
-              <div className="stat-bar-fill-gradient fill-cyan" style={{ width: `${transportStats.ambulance.pct}%` }} />
+              <div
+                className="stat-bar-fill-gradient fill-cyan"
+                style={{ width: `${transportStats.ambulance.pct}%` }}
+              />
             </div>
           </div>
         </div>
@@ -2898,7 +4161,9 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
       <div className="table-card corporate-table-card">
         <div className="table-caption corporate-table-caption">
           <div>
-            <strong className="table-main-title">Solicitudes Individuales de Traslado</strong>
+            <strong className="table-main-title">
+              Solicitudes Individuales de Traslado
+            </strong>
           </div>
           <button
             type="button"
@@ -2910,7 +4175,8 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
           </button>
         </div>
         <div className="mobile-scroll-hint">
-          <span>↔</span> Desliza la tabla horizontalmente para ver todos los campos
+          <span>↔</span> Desliza la tabla horizontalmente para ver todos los
+          campos
         </div>
         <div className="table-scroll">
           <table className="compact-movement-table modern-navy-table">
@@ -2939,18 +4205,36 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
             </thead>
             <tbody>
               {paginatedRequests.map((req) => {
-                const isCompleted = req.status === 'REALIZADO'
-                const serviceDur = isCompleted ? calculateDurationMinutes(req.assignmentTime || req.timestamp, req.movementTime) : null
-                const reactDur = calculateDurationMinutes(req.timestamp, req.assignmentTime || (isCompleted ? req.movementTime : null))
-                const totalDur = isCompleted ? calculateDurationMinutes(req.timestamp, req.movementTime) : null
+                const isCompleted = req.status === "REALIZADO";
+                const serviceDur = isCompleted
+                  ? calculateDurationMinutes(
+                      req.assignmentTime || req.timestamp,
+                      req.movementTime,
+                    )
+                  : null;
+                const reactDur = calculateDurationMinutes(
+                  req.timestamp,
+                  req.assignmentTime || (isCompleted ? req.movementTime : null),
+                );
+                const totalDur = isCompleted
+                  ? calculateDurationMinutes(req.timestamp, req.movementTime)
+                  : null;
                 return (
                   <tr key={req.id}>
-                    <td><strong className="table-id-text">{req.requestId || 'TR-1000'}</strong></td>
-                    <td><strong>{req.record}</strong></td>
+                    <td>
+                      <strong className="table-id-text">
+                        {req.requestId || "TR-1000"}
+                      </strong>
+                    </td>
+                    <td>
+                      <strong>{req.record}</strong>
+                    </td>
                     <td className="patient-name-cell">{req.patient}</td>
                     <td>
-                      <span className={`priority-badge priority-${(req.priority || 'media').toLowerCase()}`}>
-                        {(req.priority || 'media').toUpperCase()}
+                      <span
+                        className={`priority-badge priority-${(req.priority || "media").toLowerCase()}`}
+                      >
+                        {(req.priority || "media").toUpperCase()}
                       </span>
                     </td>
                     <td className="service-name-cell">{req.service}</td>
@@ -2960,36 +4244,54 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
                     <td>{req.oxygen}</td>
                     <td>{req.mover}</td>
                     <td>{req.timestamp}</td>
-                    <td>{req.assignmentTime || 'Pendiente'}</td>
-                    <td>{isCompleted ? req.movementTime : 'Pendiente'}</td>
+                    <td>{req.assignmentTime || "Pendiente"}</td>
+                    <td>{isCompleted ? req.movementTime : "Pendiente"}</td>
                     <td>
-                      <span className={`badge-pill ${isCompleted && serviceDur !== null ? 'pill-blue' : 'pill-gray'}`}>
-                        {isCompleted && serviceDur !== null ? formatDuration(serviceDur) : '—'}
+                      <span
+                        className={`badge-pill ${isCompleted && serviceDur !== null ? "pill-blue" : "pill-gray"}`}
+                      >
+                        {isCompleted && serviceDur !== null
+                          ? formatDuration(serviceDur)
+                          : "—"}
                       </span>
                     </td>
                     <td>
-                      <span className={`badge-pill ${reactDur !== null ? 'pill-purple' : 'pill-gray'}`}>
-                        {reactDur !== null ? formatDuration(reactDur) : '—'}
+                      <span
+                        className={`badge-pill ${reactDur !== null ? "pill-purple" : "pill-gray"}`}
+                      >
+                        {reactDur !== null ? formatDuration(reactDur) : "—"}
                       </span>
                     </td>
                     <td>
-                      <span className={`badge-pill ${isCompleted && totalDur !== null ? 'pill-amber' : 'pill-gray'}`}>
-                        {isCompleted && totalDur !== null ? formatDuration(totalDur) : '—'}
+                      <span
+                        className={`badge-pill ${isCompleted && totalDur !== null ? "pill-amber" : "pill-gray"}`}
+                      >
+                        {isCompleted && totalDur !== null
+                          ? formatDuration(totalDur)
+                          : "—"}
                       </span>
                     </td>
                     <td>
-                      <span className={`badge-pill ${isCompleted ? 'pill-green' : 'pill-orange'}`}>
-                        {isCompleted ? 'Completado' : req.status === 'PENDIENTE' ? 'Pendiente' : req.status}
+                      <span
+                        className={`badge-pill ${isCompleted ? "pill-green" : "pill-orange"}`}
+                      >
+                        {isCompleted
+                          ? "Completado"
+                          : req.status === "PENDIENTE"
+                            ? "Pendiente"
+                            : req.status}
                       </span>
                     </td>
-                    <td>{req.observation || '—'}</td>
-                    <td>{req.centralObservation || '—'}</td>
+                    <td>{req.observation || "—"}</td>
+                    <td>{req.centralObservation || "—"}</td>
                   </tr>
-                )
+                );
               })}
               {!filteredRequests.length && (
                 <tr>
-                  <td colSpan={19} className="empty-state">No hay traslados con estos filtros.</td>
+                  <td colSpan={19} className="empty-state">
+                    No hay traslados con estos filtros.
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -3005,15 +4307,28 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
 
       {/* MODAL DE GESTIÓN DEL PERSONAL DE CAMILLEROS */}
       {showCamillerosModal && (
-        <div className="modal-overlay" onClick={() => setShowCamillerosModal(false)}>
-          <div className="modal-card edit-modal-card" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="modal-overlay"
+          onClick={() => setShowCamillerosModal(false)}
+        >
+          <div
+            className="modal-card edit-modal-card"
+            onClick={(e) => e.stopPropagation()}
+          >
             <header className="modal-header">
               <h2>Gestión del Personal de Camilleros</h2>
-              <button type="button" className="close-modal-btn" onClick={() => setShowCamillerosModal(false)}>✕</button>
+              <button
+                type="button"
+                className="close-modal-btn"
+                onClick={() => setShowCamillerosModal(false)}
+              >
+                ✕
+              </button>
             </header>
             <div className="personnel-modal-body">
               <p className="personnel-modal-desc">
-                Agrega o elimina nombres del equipo de camilleros. Los nombres registrados aparecerán en los selectores de asignación.
+                Agrega o elimina nombres del equipo de camilleros. Los nombres
+                registrados aparecerán en los selectores de asignación.
               </p>
               <form onSubmit={handleAddCamillero} className="personnel-form">
                 <input
@@ -3035,9 +4350,9 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
                       type="button"
                       className="personnel-tag-close"
                       onClick={(e) => {
-                        e.stopPropagation()
-                        e.preventDefault()
-                        handleRemoveCamillero(name)
+                        e.stopPropagation();
+                        e.preventDefault();
+                        handleRemoveCamillero(name);
                       }}
                       title={`Eliminar a ${name}`}
                     >
@@ -3048,7 +4363,11 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
               </div>
             </div>
             <footer className="modal-footer">
-              <button className="submit-button" type="button" onClick={() => setShowCamillerosModal(false)}>
+              <button
+                className="submit-button"
+                type="button"
+                onClick={() => setShowCamillerosModal(false)}
+              >
                 Cerrar
               </button>
             </footer>
@@ -3056,7 +4375,11 @@ function AnalyticsPage({ requests: initialRequests, camilleros = [], onUpdateCam
         </div>
       )}
     </section>
-  )
+  );
 }
 
-createRoot(document.getElementById('root')).render(<StrictMode><App /></StrictMode>)
+createRoot(document.getElementById("root")).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);

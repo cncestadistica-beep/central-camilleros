@@ -2415,3 +2415,61 @@ td.status-cell.pendiente { color: #53389e !important; font-weight: 800 !importan
 .form-sections-grid > .form-column-card:first-child {
   z-index: 50 !important;
 }
+
+/* Baja la tarjeta de botones en móvil para que la lista no la tape */
+@media (max-width: 640px) {
+  .compact-actions.photo-actions {
+    margin-top: 40px !important;
+  }
+}
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.confirm-box {
+  background: #fff;
+  border-radius: 16px;
+  padding: 24px 20px;
+  max-width: 340px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+}
+
+.confirm-box p {
+  margin: 0 0 20px;
+  font-weight: 600;
+  color: #2d2a5e;
+}
+
+.confirm-buttons {
+  display: flex;
+  gap: 12px;
+}
+
+.confirm-buttons button {
+  flex: 1;
+  min-height: 46px;
+  border-radius: 10px;
+  border: none;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.confirm-cancel {
+  background: #e8ecef;
+  color: #2d2a5e;
+}
+
+.confirm-accept {
+  background: #d9534f;
+  color: #fff;
+}
