@@ -161,6 +161,7 @@ button { cursor: pointer; }
   gap: 10px;
 }
 
+
 .column-fields-body {
   display: flex;
   flex-direction: column;
@@ -2398,4 +2399,19 @@ td.status-cell.pendiente { color: #53389e !important; font-weight: 800 !importan
     justify-content: center !important;
     flex-wrap: wrap !important;
   }
+}
+
+/* La primera tarjeta queda por encima para que no se tape la lista */
+.form-sections-grid > .form-column-card:first-child {
+  position: relative;
+  z-index: 5;
+}
+
+.form-sections-grid > .form-column-card {
+  position: relative !important;
+  z-index: 1 !important;
+  overflow: visible !important;
+}
+.form-sections-grid > .form-column-card:first-child {
+  z-index: 50 !important;
 }
