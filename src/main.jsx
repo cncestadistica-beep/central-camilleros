@@ -309,8 +309,12 @@ async function directTursoExecute(statements) {
     },
     body: payload
   })
-  if (!res.ok) throw new Error(`Turso HTTP ${res.status}`)
-  return await res.json()
+    if (!res.ok) throw new Error(`Turso HTTP ${res.status}`)
+  const json = await res.json()
+  for (const r of json.results || []) {
+    if (r.type === 'error') console.error('Turso rechazó la consulta:', r.error?.message)
+  }
+  return json
 }
 
 function parseTursoResult(result) {
@@ -511,7 +515,6 @@ const saveApiRequest = async (request) => {
       request.assignmentTime || request.assignment_time || null,
       request.movementTime || request.movement_time || 'pendiente',
       (request.priority || 'media').trim().toLowerCase(),
-            (request.priority || 'media').trim().toLowerCase(),
       (request.isolation || '').trim().toLowerCase()
     ]
     
