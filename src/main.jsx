@@ -789,9 +789,10 @@ function RequestForm({ onSubmit, requests, onNavigate }) {
   }
 
   const handleClear = () => {
-    setForm(initialForm)
-    setErrors({})
-  }
+  if (!window.confirm('¿Seguro que quieres borrar todo el formulario?')) return
+  setForm(initialForm)
+  setErrors({})
+}
 
   const handleNewSubmission = () => {
     setSubmittedData(null)
@@ -910,6 +911,21 @@ function RequestForm({ onSubmit, requests, onNavigate }) {
         <div className="compact-actions photo-actions">
           <button className="clear-button" type="button" onClick={handleClear}>Limpiar formulario</button>
           <button className="submit-button photo-submit" type="submit">Enviar solicitud</button>
+          {showClearConfirm && (
+  <div className="confirm-overlay">
+    <div className="confirm-box">
+      <p>¿Seguro que quieres borrar todo el formulario?</p>
+      <div className="confirm-buttons">
+        <button type="button" className="confirm-cancel" onClick={() => setShowClearConfirm(false)}>
+          Cancelar
+        </button>
+        <button type="button" className="confirm-accept" onClick={confirmClear}>
+          Sí, borrar
+        </button>
+      </div>
+    </div>
+  </div>
+)}
         </div>
       </form>
     </section>
