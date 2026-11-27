@@ -450,6 +450,8 @@ const mapIncomingRequest = (item, idx) => ({
   assignmentTime: item.assignment_time || item.assignmentTime || null,
   movementTime: item.movement_time || item.movementTime || "pendiente",
   priority: (item.priority || "media").trim().toLowerCase(),
+    locked_by: item.locked_by || null,
+  locked_at: item.locked_at ? Number(item.locked_at) : null,
 });
 
 const mergeRequests = (
@@ -1251,29 +1253,6 @@ function RequestForm({ onSubmit, requests, onNavigate }) {
             </div>
           </div>
         )}
-        {showClearConfirm && (
-  <div className="confirm-overlay">
-    <div className="confirm-box">
-      <p>¿Seguro que quieres borrar todo el formulario?</p>
-      <div className="confirm-buttons">
-        <button
-          type="button"
-          className="confirm-cancel"
-          onClick={() => setShowClearConfirm(false)}
-        >
-          Cancelar
-        </button>
-        <button
-          type="button"
-          className="confirm-accept"
-          onClick={confirmClear}
-        >
-          Sí, borrar
-        </button>
-      </div>
-    </div>
-  </div>
-)}
       </form>
     </section>
   );
