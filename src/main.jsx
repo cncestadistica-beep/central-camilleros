@@ -1351,6 +1351,21 @@ function DashboardPage({
     centralObservation: "",
   });
 
+  const [lockNotice, setLockNotice] = useState("");
+  const [opening, setOpening] = useState(false);
+
+  // Mientras la ventana de edición está abierta: renueva el bloqueo cada 2 min.
+  // Al cerrarse (Cancelar, X, Guardar o cambiar de página) lo libera solo.
+  useEffect(() => {
+    if (!editRequest) return;
+    const id = editRequest.id;
+    const timer = setInterval(() => lockRequest(id), 2 * 60 * 1000);
+    return () => {
+      clearInterval(timer);
+      unlockRequest(id);
+    };
+  }, [editRequest?.id]);
+
   // Solo traslados PENDIENTES en la Central de Camilleros (Realizados y No Realizados van al Historial)
   const activeRequests = useMemo(() => {
     return requests.filter(
@@ -1387,7 +1402,26 @@ function DashboardPage({
     }, 300);
   };
 
-  const handleOpenEdit = (request) => {
+    const handleOpenEdit = async (request) => {
+    if (opening) return;
+    setOpening(true);
+    const result = await lockRequest(request.id);
+    setOpening(false);
+
+    if (result === "busy") {
+      setLockNotice(
+        "Esta orden está siendo gestionada por otra persona. Intenta de nuevo en unos minutos.",
+      );
+      if (onRefresh) onRefresh(false);
+      return;
+    }
+    if (result === "error") {
+      setLockNotice(
+        "No se pudo verificar el estado de la orden. Revisa tu conexión e intenta de nuevo.",
+      );
+      return;
+    }
+
     setEditError("");
     setEditRequest(request);
     setEditDraft({
