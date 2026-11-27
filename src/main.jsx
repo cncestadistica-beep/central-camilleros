@@ -1436,7 +1436,7 @@ function DashboardPage({
     });
   };
 
-  const handleSaveEdit = () => {
+    const handleSaveEdit = async () => {
     if (!editRequest) return;
 
     const moverClean = (editDraft.mover || "").trim();
@@ -1457,6 +1457,15 @@ function DashboardPage({
       }
     }
     setEditError("");
+
+    // Verifica (y renueva) que el bloqueo siga siendo tuyo antes de guardar
+    const stillMine = await lockRequest(editRequest.id);
+    if (stillMine !== "ok") {
+      setEditError(
+        "No se pudo confirmar que esta orden siga reservada para ti. Cierra esta ventana y vuelve a intentarlo.",
+      );
+      return;
+    }
 
     let updatedMovementTime = editRequest.movementTime || "Pendiente";
     let updatedAssignmentTime = editRequest.assignmentTime || null;
@@ -1500,6 +1509,8 @@ function DashboardPage({
           centralObservation: editDraft.centralObservation.trim(),
           movementTime: updatedMovementTime,
           assignmentTime: updatedAssignmentTime,
+          locked_by: null,
+          locked_at: null,
         };
       }
       return item;
