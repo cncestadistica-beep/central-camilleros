@@ -319,23 +319,23 @@ const TURSO_TOKEN =
   "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJleHAiOjE4MjIxMzU1MDksImlhdCI6MTc5MDU5OTUwOSwiaWQiOiIwMWEwZTgwYi1lYzAxLTdiMzktOGIyMC02ZTQxYWI2OTE2NGEiLCJraWQiOiJ6a2tLcGc0SDNYSFFMeE40NXI4RDNkN3RoYUlsS1BXeG42N2l0SWpxVmtFIiwicmlkIjoiZWVkZDlhZWEtNjJiOS00NmY0LWI5MDQtMzkwY2FlZmJiMTM3In0.mLLZIsgXe3HGeD3cpLmqWju2zIIsAgksxOqG5-wM_396-Cyt8bKPWI8nOx3G9sUE_S6E09KBu-ADlgdNxBEeCw";
 
 // ===== Bloqueo de órdenes en gestión =====
-const LOCK_TTL_MS = 5 * 60 * 1000 // el bloqueo expira a los 5 minutos
+const LOCK_TTL_MS = 5 * 60 * 1000; // el bloqueo expira a los 5 minutos
 
 // Identificador de esta pestaña (cada pestaña cuenta como una "persona")
 const CLIENT_ID = (() => {
   try {
-    let id = sessionStorage.getItem('camilleros_client_id')
+    let id = sessionStorage.getItem("camilleros_client_id");
     if (!id) {
       id = crypto.randomUUID
         ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-      sessionStorage.setItem('camilleros_client_id', id)
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      sessionStorage.setItem("camilleros_client_id", id);
     }
-    return id
+    return id;
   } catch {
-    return `anon-${Math.random().toString(36).slice(2)}`
+    return `anon-${Math.random().toString(36).slice(2)}`;
   }
-})()
+})();
 
 // Devuelve 'ok' (es tuya), 'busy' (la tiene otra persona) o 'error' (no se pudo verificar)
 async function lockRequest(id) {
@@ -350,13 +350,13 @@ async function lockRequest(id) {
                      OR locked_at < (CAST(strftime('%s','now') AS INTEGER) * 1000) - ?);`,
         args: [CLIENT_ID, String(id), CLIENT_ID, LOCK_TTL_MS],
       },
-    ])
-    const first = res?.results?.[0]
-    if (!first || first.type === 'error') return 'error'
-    return first.response?.result?.affected_row_count === 1 ? 'ok' : 'busy'
+    ]);
+    const first = res?.results?.[0];
+    if (!first || first.type === "error") return "error";
+    return first.response?.result?.affected_row_count === 1 ? "ok" : "busy";
   } catch (err) {
-    console.error('Error bloqueando orden:', err)
-    return 'error'
+    console.error("Error bloqueando orden:", err);
+    return "error";
   }
 }
 
@@ -369,17 +369,17 @@ async function unlockRequest(id) {
               WHERE id = ? AND locked_by = ?;`,
         args: [String(id), CLIENT_ID],
       },
-    ])
+    ]);
   } catch (err) {
-    console.error('Error liberando orden:', err)
+    console.error("Error liberando orden:", err);
   }
 }
 
 // ¿Esta orden la tiene otra persona (y el bloqueo no ha expirado)?
 function isLockedByOther(item) {
-  if (!item || !item.locked_by) return false
-  if (item.locked_by === CLIENT_ID) return false
-  return Date.now() - Number(item.locked_at || 0) < LOCK_TTL_MS
+  if (!item || !item.locked_by) return false;
+  if (item.locked_by === CLIENT_ID) return false;
+  return Date.now() - Number(item.locked_at || 0) < LOCK_TTL_MS;
 }
 // ===== Fin bloqueo =====
 
@@ -450,7 +450,7 @@ const mapIncomingRequest = (item, idx) => ({
   assignmentTime: item.assignment_time || item.assignmentTime || null,
   movementTime: item.movement_time || item.movementTime || "pendiente",
   priority: (item.priority || "media").trim().toLowerCase(),
-    locked_by: item.locked_by || null,
+  locked_by: item.locked_by || null,
   locked_at: item.locked_at ? Number(item.locked_at) : null,
 });
 
@@ -946,7 +946,7 @@ function App() {
 function RequestForm({ onSubmit, requests, onNavigate }) {
   const [form, setForm] = useState(initialForm);
   const [errors, setErrors] = useState({});
-  const [submittedData, setSubmittedData] = useState(null)
+  const [submittedData, setSubmittedData] = useState(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   const update = (key, value) => {
@@ -1402,7 +1402,7 @@ function DashboardPage({
     }, 300);
   };
 
-    const handleOpenEdit = async (request) => {
+  const handleOpenEdit = async (request) => {
     if (opening) return;
     setOpening(true);
     const result = await lockRequest(request.id);
@@ -1436,7 +1436,7 @@ function DashboardPage({
     });
   };
 
-    const handleSaveEdit = async () => {
+  const handleSaveEdit = async () => {
     if (!editRequest) return;
 
     const moverClean = (editDraft.mover || "").trim();
@@ -1654,11 +1654,20 @@ function DashboardPage({
                     >
                       {request.status}
                     </span>
+                    {isLockedByOther(request) && (
+                      <span className="lock-badge">En gestión</span>
+                    )}
                   </td>
                   <td className="row-actions">
                     <button
                       className="details-button"
                       type="button"
+                      disabled={isLockedByOther(request)}
+                      title={
+                        isLockedByOther(request)
+                          ? "Orden en gestión por otra persona"
+                          : ""
+                      }
                       onClick={() => setDetailRequest(request)}
                     >
                       Detalles
@@ -1666,6 +1675,12 @@ function DashboardPage({
                     <button
                       className="edit-button"
                       type="button"
+                      disabled={isLockedByOther(request) || opening}
+                      title={
+                        isLockedByOther(request)
+                          ? "Orden en gestión por otra persona"
+                          : ""
+                      }
                       onClick={() => handleOpenEdit(request)}
                     >
                       Editar
@@ -1796,6 +1811,23 @@ function DashboardPage({
                 Cerrar
               </button>
             </footer>
+          </div>
+        </div>
+      )}
+
+      {lockNotice && (
+        <div className="confirm-overlay" onClick={() => setLockNotice("")}>
+          <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
+            <p>{lockNotice}</p>
+            <div className="confirm-buttons">
+              <button
+                type="button"
+                className="submit-button"
+                onClick={() => setLockNotice("")}
+              >
+                Entendido
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2755,9 +2787,28 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
                       <button
                         className="details-button"
                         type="button"
-                        onClick={() => setDetailRequest(req)}
+                        disabled={isLockedByOther(request)}
+                        title={
+                          isLockedByOther(request)
+                            ? "Orden en gestión por otra persona"
+                            : ""
+                        }
+                        onClick={() => setDetailRequest(request)}
                       >
                         Detalles
+                      </button>
+                      <button
+                        className="edit-button"
+                        type="button"
+                        disabled={isLockedByOther(request) || opening}
+                        title={
+                          isLockedByOther(request)
+                            ? "Orden en gestión por otra persona"
+                            : ""
+                        }
+                        onClick={() => handleOpenEdit(request)}
+                      >
+                        Editar
                       </button>
                     </td>
                   </tr>
