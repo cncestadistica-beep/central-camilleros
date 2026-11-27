@@ -2783,32 +2783,13 @@ function HistoryPage({ requests, onRefresh, onNavigate }) {
                       <strong>{req.mover}</strong>
                     </td>
                     <td>{req.centralObservation || "—"}</td>
-                    <td className="row-actions">
+                                        <td className="row-actions">
                       <button
                         className="details-button"
                         type="button"
-                        disabled={isLockedByOther(request)}
-                        title={
-                          isLockedByOther(request)
-                            ? "Orden en gestión por otra persona"
-                            : ""
-                        }
-                        onClick={() => setDetailRequest(request)}
+                        onClick={() => setDetailRequest(req)}
                       >
                         Detalles
-                      </button>
-                      <button
-                        className="edit-button"
-                        type="button"
-                        disabled={isLockedByOther(request) || opening}
-                        title={
-                          isLockedByOther(request)
-                            ? "Orden en gestión por otra persona"
-                            : ""
-                        }
-                        onClick={() => handleOpenEdit(request)}
-                      >
-                        Editar
                       </button>
                     </td>
                   </tr>
